@@ -2,6 +2,10 @@
 
 Myra is an AI voice assistant capable of voice interaction, memory storage, and emotional responses through a virtual avatar.
 
+## Demo
+
+![Myra Demo](assets/myra_demo.png)
+
 ## Features
 - Voice conversation
 - Memory storage using SQLite
