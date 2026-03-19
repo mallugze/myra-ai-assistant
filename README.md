@@ -29,12 +29,4 @@ Myra is an AI voice assistant capable of voice interaction, memory storage, and 
 4. Response converted to speech
 5. Avatar reacts
 
-## Run the Project
 
-Install dependencies
-
-pip install -r requirements.txt
-
-Run
-
-python main.py
