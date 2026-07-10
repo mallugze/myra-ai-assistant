@@ -38,9 +38,18 @@ last_processed_text = ""
 is_speaking = False
 
 # -------- Load Whisper --------
+import torch
 
 print("Loading Whisper model...")
-model = WhisperModel("medium", device="cuda", compute_type="float16")
+
+# Automatically detects if your NVIDIA card is ready
+if torch.cuda.is_available():
+    print(f"--> Success! Unleashing GPU: {torch.cuda.get_device_name(0)}")
+    model = WhisperModel("medium", device="cuda", compute_type="float16")
+else:
+    print("--> GPU not fully initialized by Windows. Falling back to CPU mode safely.")
+    model = WhisperModel("medium", device="cpu", compute_type="int8")
+
 print("Whisper ready.")
 
 # -------- Helper Functions --------
