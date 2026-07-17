@@ -80,9 +80,9 @@ yolo_model = YOLO("yolov8n.pt")
 current_detected_objects = []
 
 def vision_monitor_loop():
-    global last_seen_person, last_interaction_time, current_frame, current_detected_objects
+    global last_seen_person, last_interaction_time, current_frame, current_detected_objects, object_timers
     
-    print("--- [EYES] Initializing Live DL View Window (CPU Safe Mode)... ---")
+    print("--- [EYES] Initializing Human-Like Vision Engine (CPU Mode)... ---")
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
@@ -92,8 +92,7 @@ def vision_monitor_loop():
     cv2.namedWindow("Myra's Eyes", cv2.WINDOW_NORMAL)
     
     last_face_check = 0
-    face_interval = 4.0  # Check face details every 4 seconds to save system resources
-    
+    face_interval = 3.5  # Rapid check interval for fluid human reactions
     name = "Scanning..."
     emotion = "Analyzing..."
 
@@ -105,60 +104,98 @@ def vision_monitor_loop():
         
         current_frame = frame.copy()
         now = time.time()
+        today_str = datetime.now().strftime("%Y-%m-%d")
 
-        # 1. RUN OBJECT DETECTION CLEANLY ON CPU
-        # Passing device="cpu" bypasses the Blackwell kernel crash entirely!
+        # 1. PASSIVE OBJECT TRACKING (Quiet Room Awareness)
         yolo_results = yolo_model.predict(frame, device="cpu", verbose=False)[0]
-        
         detected_items = []
+        
         for box in yolo_results.boxes:
             class_id = int(box.cls[0])
             item_name = yolo_model.names[class_id]
-            detected_items.append(item_name)
+            if item_name in ["cell phone", "keyboard", "cup", "bottle", "book", "backpack", "monitor"]:
+                clean_name = "phone" if item_name == "cell phone" else item_name
+                detected_items.append(clean_name)
         
-        current_detected_objects = list(set(detected_items))
+        detected_items = list(set(detected_items))
+        current_detected_objects = detected_items
 
-        # Grab visual frame with tracking boxes overlayed
+        # Quietly track how long they stay in your space without speaking them out loud
+        for item in detected_items:
+            if item not in object_timers:
+                object_timers[item] = {"first_seen": now, "last_seen": now}
+            else:
+                object_timers[item]["last_seen"] = now
+
+        stale_items = [item for item, timestamps in object_timers.items() if now - timestamps["last_seen"] > 60]
+        for item in stale_items:
+            del object_timers[item]
+
         display_frame = yolo_results.plot()
 
-        # 2. RUN FACE/EMOTION DETECTION EVERY 4 SECONDS
+        # 2. ACTIVE FACE & GENDER INTERRUPTION LOGIC
         if now - last_face_check > face_interval:
             last_face_check = now
             try:
-                # DeepFace handles CPU tracking natively if its source image is a clean NumPy array
                 results = DeepFace.find(img_path=frame, db_path=DB_PATH, enforce_detection=False, silent=True)
-                analysis = DeepFace.analyze(img_path=frame, actions=['emotion'], enforce_detection=False, silent=True)
+                # Added 'gender' action so she can distinguish who enters the frame!
+                analysis = DeepFace.analyze(img_path=frame, actions=['emotion', 'gender'], enforce_detection=False, silent=True)
                 emotion = analysis[0]['dominant_emotion']
 
                 if len(results) > 0 and not results[0].empty:
                     full_path = results[0]['identity'][0]
                     name = os.path.basename(full_path).split(".")[0]
+                    
+                    # Store today's baseline outfit structure
+                    db_conn = sqlite3.connect("myra_memory.db")
+                    db_cursor = db_conn.cursor()
+                    db_cursor.execute("""
+                        INSERT INTO visual_history (date, outfit) VALUES (?, ?)
+                        ON CONFLICT(date) DO UPDATE SET outfit=excluded.outfit
+                    """, (today_str, "that same dark shirt"))
+                    db_conn.commit()
+                    db_conn.close()
                 else:
                     name = "Stranger"
 
-                # Interruption Engine
+                # SPONTANEOUS INTERRUPTION ENGINE
                 if name != last_seen_person and (now - last_interaction_time > 15):
                     last_seen_person = name
                     last_interaction_time = now
+                    
                     if name == "Stranger":
-                        trigger_vmc_expression("Surprised", 1.0)
+                        # Inspect the stranger's profile metrics
+                        detected_gender = analysis[0].get('dominant_gender', 'unknown').lower()
+                        
+                        # ONLY trigger if a female profile is explicitly detected
+                        if "woman" in detected_gender or "female" in detected_gender:
+                            trigger_vmc_expression("Surprised", 1.0)
+                            interruption_tease = "Wait, who do we have here? Mallu, is she your girlfriend? 🤭🤭"
+                            
+                            print(f"\n✨ [MYRA SPONTANEOUS INTERRUPTION]: {interruption_tease}")
+                            
+                            # Generate and speak the line immediately
+                            try:
+                                clean_text = clean_for_tts(interruption_tease)
+                                with contextlib.redirect_stdout(io.StringIO()):
+                                    audio_data = model_en.apply_tts(text=clean_text, speaker='en_0', sample_rate=48000)
+                                sf.write("interruption.wav", audio_data, 48000)
+                                winsound.PlaySound("interruption.wav", winsound.SND_FILENAME | winsound.SND_ASYNC)
+                            except Exception as audio_err:
+                                print(f"Interruption TTS failure: {audio_err}")
                     else:
+                        # It recognized you!
                         trigger_vmc_expression("Fun", 1.0)
                         
             except Exception as e:
-                print(f"--- [EYES] Face Sync Error: {e} ---")
+                pass
 
-        # 3. DRAW DATA INTERFACE OVERLAY
+        # 3. RENDER ON-SCREEN DIAGNOSTICS
         cv2.rectangle(display_frame, (0, 0), (640, 95), (0, 0, 0), -1)
         cv2.putText(display_frame, f"TARGET: {name.upper()}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         cv2.putText(display_frame, f"MOOD: {emotion.upper()}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 144, 30), 2)
-        
-        if current_detected_objects:
-            cv2.putText(display_frame, f"SEEING: {', '.join(current_detected_objects)}", (20, frame.shape[0] - 20), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
 
         cv2.imshow("Myra's Eyes", display_frame)
-        
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
