@@ -1,0 +1,16 @@
+fastapi>=0.115.0
+uvicorn>=0.32.0
+pydantic>=2.10.0
+requests>=2.32.0
+python-osc>=1.8.3
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+deepface>=0.0.90
+sounddevice>=0.5.0
+soundfile>=0.12.0
+scipy>=1.11.0
+numpy>=1.24.0
+faster-whisper>=1.0.0
+edge-tts>=6.1.18
+torch>=2.0.0
+python-pptx>=1.0.0
