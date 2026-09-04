@@ -43,14 +43,56 @@ last_interaction_time = time.time()
 last_processed_text = ""
 is_speaking = False
 
+# -------- CUDA DLL Resolution for Windows --------
+import site
+
+def setup_cuda_dlls():
+    """Adds nvidia CUDA and cuDNN dll paths to PATH and Windows DLL directories."""
+    paths_to_add = []
+    site_packages_dirs = site.getsitepackages() if hasattr(site, 'getsitepackages') else []
+    if hasattr(site, 'getusersitepackages'):
+        site_packages_dirs.append(site.getusersitepackages())
+
+    for base in site_packages_dirs:
+        nvidia_dir = os.path.join(base, "nvidia")
+        if os.path.exists(nvidia_dir):
+            for root, dirs, files in os.walk(nvidia_dir):
+                if any(f.endswith(".dll") for f in files):
+                    paths_to_add.append(root)
+
+        torch_lib = os.path.join(base, "torch", "lib")
+        if os.path.exists(torch_lib):
+            paths_to_add.append(torch_lib)
+
+    for p in set(paths_to_add):
+        if p not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = p + os.pathsep + os.environ.get("PATH", "")
+        if hasattr(os, "add_dll_directory") and os.path.isdir(p):
+            try:
+                os.add_dll_directory(p)
+            except Exception:
+                pass
+
 # -------- Load Whisper STT --------
 
-print("--- [EARS] Loading Faster-Whisper Model... ---")
+print("--- [EARS] Initializing Faster-Whisper Model... ---")
+setup_cuda_dlls()
+
+whisper_model = None
 if torch.cuda.is_available():
-    print(f"--> [EARS] CUDA GPU Detected: {torch.cuda.get_device_name(0)}")
-    whisper_model = WhisperModel("medium", device="cuda", compute_type="float16")
-else:
-    print("--> [EARS] Running on CPU (int8)...")
+    try:
+        print(f"--> [EARS] Attempting CUDA Acceleration on: {torch.cuda.get_device_name(0)}")
+        whisper_model = WhisperModel("medium", device="cuda", compute_type="float16")
+        # Verify CUDA actually works with a 0.1s dummy tensor
+        dummy_audio = np.zeros(1600, dtype=np.float32)
+        _ = list(whisper_model.transcribe(dummy_audio, beam_size=1)[0])
+        print("--> [EARS] Success! CUDA Acceleration is fully active.")
+    except Exception as cuda_err:
+        print(f"--> [EARS] CUDA link notice ({cuda_err}). Falling back to CPU (int8)...")
+        whisper_model = None
+
+if whisper_model is None:
+    print("--> [EARS] Running on CPU (int8) mode...")
     whisper_model = WhisperModel("medium", device="cpu", compute_type="int8")
 
 print("--- [EARS] Faster-Whisper Ready! ---")
@@ -142,8 +184,8 @@ def record_audio_in_memory():
 
 def transcribe_audio(audio_array):
     """Transcribes in-memory float32 audio buffer with Faster-Whisper."""
+    global whisper_model
     try:
-        # Transcribe directly from memory buffer without saving to disk
         segments, info = whisper_model.transcribe(
             audio_array,
             beam_size=5,
@@ -153,8 +195,20 @@ def transcribe_audio(audio_array):
         text = " ".join([segment.text for segment in segments]).strip()
         return text
     except Exception as e:
-        print(f"Transcription Error: {e}")
-        return ""
+        print(f"Transcription Notice ({e}), switching to CPU fallback...")
+        try:
+            whisper_model = WhisperModel("medium", device="cpu", compute_type="int8")
+            segments, info = whisper_model.transcribe(
+                audio_array,
+                beam_size=5,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=500)
+            )
+            text = " ".join([segment.text for segment in segments]).strip()
+            return text
+        except Exception as cpu_err:
+            print(f"Transcription Error: {cpu_err}")
+            return ""
 
 def send_to_myra(text):
     """Sends text to Myra FastAPI backend."""
@@ -177,79 +231,78 @@ def speak_direct(text, output_file="exit.wav"):
     except Exception as e:
         print(f"Direct Speech Notice: {e}")
 
-# -------- Main Voice Loop --------
+if __name__ == "__main__":
+    print("\n✨ Myra Voice Loop is active! Say 'Myra' to wake her up.\n")
 
-print("\n✨ Myra Voice Loop is active! Say 'Myra' to wake her up.\n")
+    while True:
+        if is_speaking:
+            time.sleep(0.1)
+            continue
 
-while True:
-    if is_speaking:
-        time.sleep(0.1)
-        continue
+        audio_buffer = record_audio_in_memory()
 
-    audio_buffer = record_audio_in_memory()
+        # -------- Inactivity / Idle Timeout --------
+        if audio_buffer is None:
+            if is_active and (time.time() - last_interaction_time > ACTIVE_TIMEOUT):
+                is_active = False
+                exit_line = random.choice(EXIT_LINES)
+                print(f"\n[Myra]: {exit_line}")
+                print("💤 [STATUS] Myra went to sleep (Waiting for wake word)...\n")
+                speak_direct(exit_line)
+            time.sleep(0.5)
+            continue
 
-    # -------- Inactivity / Idle Timeout --------
-    if audio_buffer is None:
-        if is_active and (time.time() - last_interaction_time > ACTIVE_TIMEOUT):
-            is_active = False
-            exit_line = random.choice(EXIT_LINES)
-            print(f"\n[Myra]: {exit_line}")
-            print("💤 [STATUS] Myra went to sleep (Waiting for wake word)...\n")
-            speak_direct(exit_line)
-        time.sleep(0.5)
-        continue
+        # -------- Fast In-Memory Transcription --------
+        user_text = transcribe_audio(audio_buffer)
 
-    # -------- Fast In-Memory Transcription --------
-    user_text = transcribe_audio(audio_buffer)
+        if not user_text:
+            continue
 
-    if not user_text:
-        continue
+        # Prevent repeating exact identical glitches
+        if user_text == last_processed_text:
+            continue
+        last_processed_text = user_text
 
-    # Prevent repeating exact identical glitches
-    if user_text == last_processed_text:
-        continue
-    last_processed_text = user_text
+        print(f"\n🗣️ [YOU]: {user_text}")
 
-    print(f"\n🗣️ [YOU]: {user_text}")
+        # -------- Wake Word Check --------
+        if not is_active:
+            if wake_detected(user_text):
+                is_active = True
+                last_interaction_time = time.time()
+                print("💫 [STATUS] Myra is listening!")
+                # If user said more than just the wake word (e.g. "Myra what are you doing")
+                cleaned_command = re_command = user_text
+                for w in WAKE_WORDS:
+                    re_command = re_command.lower().replace(w, "").strip()
 
-    # -------- Wake Word Check --------
-    if not is_active:
-        if wake_detected(user_text):
-            is_active = True
-            last_interaction_time = time.time()
-            print("💫 [STATUS] Myra is listening!")
-            # If user said more than just the wake word (e.g. "Myra what are you doing")
-            cleaned_command = re_command = user_text
-            for w in WAKE_WORDS:
-                re_command = re_command.lower().replace(w, "").strip()
-            
-            if len(re_command) > 3:
-                reply, reply_audio = send_to_myra(user_text)
-                if reply:
-                    print(f"🎀 [MYRA]: {reply}")
-                if reply_audio:
-                    safe_play(reply_audio)
-            else:
-                # Quick playful wake acknowledgment
-                wake_replies = [
-                    "Yes, Mallu? Miss me already?",
-                    "I'm listening. What do you need?",
-                    "Here! What's up?",
-                    "Did someone call their favorite companion?"
-                ]
-                ack = random.choice(wake_replies)
-                print(f"🎀 [MYRA]: {ack}")
-                speak_direct(ack)
-        continue
+                if len(re_command) > 3:
+                    reply, reply_audio = send_to_myra(user_text)
+                    if reply:
+                        print(f"🎀 [MYRA]: {reply}")
+                    if reply_audio:
+                        safe_play(reply_audio)
+                else:
+                    # Quick playful wake acknowledgment
+                    wake_replies = [
+                        "Yes, Mallu? Miss me already?",
+                        "I'm listening. What do you need?",
+                        "Here! What's up?",
+                        "Did someone call their favorite companion?"
+                    ]
+                    ack = random.choice(wake_replies)
+                    print(f"🎀 [MYRA]: {ack}")
+                    speak_direct(ack)
+            continue
 
-    # -------- Active Conversation Mode --------
-    last_interaction_time = time.time()
-    reply, reply_audio = send_to_myra(user_text)
+        # -------- Active Conversation Mode --------
+        last_interaction_time = time.time()
+        reply, reply_audio = send_to_myra(user_text)
 
-    if reply:
-        print(f"🎀 [MYRA]: {reply}")
+        if reply:
+            print(f"🎀 [MYRA]: {reply}")
 
-    if reply_audio:
-        safe_play(reply_audio)
+        if reply_audio:
+            safe_play(reply_audio)
 
-    time.sleep(0.2)
+        time.sleep(0.2)
