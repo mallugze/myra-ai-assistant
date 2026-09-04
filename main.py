@@ -55,20 +55,6 @@ last_interaction_time = time.time()
 crowd_start_time = None
 crowd_alerted = False
 
-# Fallback Silero TTS
-print("--- [BRAIN] Loading Fallback Silero TTS (Please wait)... ---")
-try:
-    silero_model, _ = torch.hub.load(
-        repo_or_dir='snakers4/silero-models',
-        model='silero_tts',
-        language='en',
-        speaker='v3_en'
-    )
-    print("--- [BRAIN] Silero Fallback Ready! ---")
-except Exception as e:
-    silero_model = None
-    print(f"--- [BRAIN] Silero Load Notice: {e} ---")
-
 # -------------------- DATABASE SETUP --------------------
 
 def get_db():
@@ -191,49 +177,41 @@ def apply_emotion_tag(text):
 
     return clean_text
 
-# -------------------- TTS GENERATION ENGINE --------------------
+# -------------------- TTS GENERATION ENGINE (ORIGINAL SILERO) --------------------
+
+print("--- [BRAIN] Loading Original Silero TTS (Please wait)... ---")
+try:
+    silero_model, _ = torch.hub.load(
+        repo_or_dir='snakers4/silero-models',
+        model='silero_tts',
+        language='en',
+        speaker='v3_en'
+    )
+    print("--- [BRAIN] Original Silero TTS Ready! ---")
+except Exception as e:
+    silero_model = None
+    print(f"--- [BRAIN] Silero Load Notice: {e} ---")
 
 def clean_for_tts(text):
     """Removes bracketed actions, emotion tags, and cleans text for speech synthesis."""
     text = re.sub(r"\[.*?\]", "", text)
     text = re.sub(r"\(.*?\)", "", text)
     text = re.sub(r"\*.*?\*", "", text)
+    text = re.sub(r"[^\w\s.,?!'\-]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text if text else "Hmm."
 
-async def synthesize_edge_tts(text, output_file, voice=DEFAULT_VOICE):
-    """Generates sweet anime audio via Edge-TTS converted to crystal-clear PCM WAV."""
-    if re.search(r"[\u0900-\u097F]", text):
-        voice = HINDI_VOICE
-
-    temp_mp3 = "temp_tts.mp3"
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(temp_mp3)
-
-    # Convert MP3 to clean 24kHz 16-bit PCM WAV for perfect playback
-    data, sr = sf.read(temp_mp3)
-    sf.write(output_file, data, sr, subtype='PCM_16')
-    try:
-        os.remove(temp_mp3)
-    except Exception:
-        pass
-
 def generate_voice(text, output_file="output.wav"):
-    """High quality fast voice generation with automatic fallback."""
+    """Generates Myra's original Silero voice."""
     clean_text = clean_for_tts(text)
-    try:
-        asyncio.run(synthesize_edge_tts(clean_text, output_file))
-        return output_file
-    except Exception as e:
-        print(f"--- [TTS] Edge-TTS notice ({e}), falling back to Silero... ---")
-        if silero_model:
-            try:
-                with contextlib.redirect_stdout(io.StringIO()):
-                    audio = silero_model.apply_tts(text=clean_text, speaker='en_0', sample_rate=48000)
-                sf.write(output_file, audio, 48000)
-                return output_file
-            except Exception as silero_err:
-                print(f"--- [TTS] Silero failed: {silero_err} ---")
+    if silero_model is not None:
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                audio = silero_model.apply_tts(text=clean_text, speaker='en_0', sample_rate=48000)
+            sf.write(output_file, audio, 48000)
+            return output_file
+        except Exception as e:
+            print(f"--- [TTS] Silero Error: {e} ---")
     return None
 
 # -------------------- AUDIO OUTPUT ROUTING --------------------
@@ -489,9 +467,19 @@ def chat(request: ChatRequest):
     except Exception as e:
         print(f"Memory Save Error: {e}")
 
-    # 7. Generate Audio
+    # 7. Generate Audio (Original Silero)
     audio_file = generate_voice(spoken_reply, "output.wav")
     return {"response": spoken_reply, "raw_response": raw_reply, "audio_file": audio_file}
+
+class TTSRequest(BaseModel):
+    text: str
+    output_file: str = "direct.wav"
+
+@app.post("/tts")
+def tts_endpoint(req: TTSRequest):
+    """Direct TTS generation using Myra's original Silero voice."""
+    audio_file = generate_voice(req.text, req.output_file)
+    return {"audio_file": audio_file}
 
 @app.post("/learn_face")
 def learn_face(req: LearnPersonRequest):

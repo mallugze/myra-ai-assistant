@@ -251,23 +251,15 @@ def send_to_myra(text):
         return None, None
 
 def speak_direct(text, output_file="exit.wav"):
-    """Synthesizes and plays a direct voice line (for exit/idle lines)."""
+    """Synthesizes and plays a direct voice line using Myra's original Silero voice."""
     try:
-        async def run():
-            temp_mp3 = "temp_direct.mp3"
-            comm = edge_tts.Communicate(text, "en-US-AnaNeural")
-            await comm.save(temp_mp3)
-            data, sr = sf.read(temp_mp3)
-            sf.write(output_file, data, sr, subtype='PCM_16')
-            try:
-                os.remove(temp_mp3)
-            except Exception:
-                pass
-
-        asyncio.run(run())
-        safe_play(output_file)
+        res = requests.post("http://127.0.0.1:8000/tts", json={"text": text, "output_file": output_file}, timeout=10)
+        data = res.json()
+        audio_file = data.get("audio_file")
+        if audio_file and os.path.exists(audio_file):
+            safe_play(audio_file)
     except Exception as e:
-        print(f"Direct Speech Notice: {e}")
+        print(f"\nDirect Speech Notice: {e}")
 
 if __name__ == "__main__":
     print("\n✨ Myra Voice Loop is active! Say 'Myra' to wake her up.\n")
