@@ -108,17 +108,54 @@ def wake_detected(text):
                 return True
     return False
 
+import soundfile as sf
+import threading
+
+def find_audio_output_devices():
+    """Finds default speakers and VB-Cable Input devices."""
+    default_out = sd.default.device[1]
+    vb_cable_out = None
+    try:
+        for i, dev in enumerate(sd.query_devices()):
+            if dev['max_output_channels'] > 0:
+                name_lower = dev['name'].lower()
+                if "cable input" in name_lower or "cable in" in name_lower:
+                    vb_cable_out = i
+                    break
+    except Exception:
+        pass
+    return default_out, vb_cable_out
+
 def safe_play(file_path):
-    """Plays audio and sets is_speaking flag to prevent hearing own voice."""
+    """Plays audio through Speakers and VB-Audio Virtual Cable for VSeeFace lip-sync simultaneously."""
     global is_speaking
     if not file_path or not os.path.exists(file_path):
         return
 
     is_speaking = True
     try:
-        winsound.PlaySound(file_path, winsound.SND_FILENAME)
+        data, fs = sf.read(file_path, dtype='float32')
+        default_out, vb_out = find_audio_output_devices()
+
+        threads = []
+        if vb_out is not None and vb_out != default_out:
+            t_vb = threading.Thread(target=lambda: sd.play(data, fs, device=vb_out, blocking=True))
+            threads.append(t_vb)
+            t_vb.start()
+
+        t_spk = threading.Thread(target=lambda: sd.play(data, fs, device=default_out, blocking=True))
+        threads.append(t_spk)
+        t_spk.start()
+
+        for t in threads:
+            t.join()
+
     except Exception as e:
-        print(f"Audio Playback Notice: {e}")
+        print(f"Audio Playback Warning: {e}, falling back to winsound...")
+        try:
+            winsound.PlaySound(file_path, winsound.SND_FILENAME)
+        except Exception:
+            pass
     finally:
         is_speaking = False
         time.sleep(0.3)
@@ -213,7 +250,7 @@ def transcribe_audio(audio_array):
 def send_to_myra(text):
     """Sends text to Myra FastAPI backend."""
     try:
-        response = requests.post(BACKEND_URL, json={"message": text}, timeout=20)
+        response = requests.post(BACKEND_URL, json={"message": text}, timeout=60)
         data = response.json()
         return data.get("response"), data.get("audio_file")
     except Exception as e:

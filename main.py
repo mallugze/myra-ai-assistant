@@ -228,13 +228,60 @@ def generate_voice(text, output_file="output.wav"):
                 print(f"--- [TTS] Silero failed: {silero_err} ---")
     return None
 
+# -------------------- AUDIO OUTPUT ROUTING (SPEAKERS + VB-CABLE) --------------------
+import sounddevice as sd
+
+def find_audio_output_devices():
+    """Finds default speakers and VB-Cable Input devices."""
+    default_out = sd.default.device[1]
+    vb_cable_out = None
+    try:
+        for i, dev in enumerate(sd.query_devices()):
+            if dev['max_output_channels'] > 0:
+                name_lower = dev['name'].lower()
+                if "cable input" in name_lower or "cable in" in name_lower:
+                    vb_cable_out = i
+                    break
+    except Exception:
+        pass
+    return default_out, vb_cable_out
+
+def play_audio(file_path):
+    """Plays audio through Speakers and VB-Audio Virtual Cable for VSeeFace lip-sync simultaneously."""
+    if not file_path or not os.path.exists(file_path):
+        return
+
+    try:
+        data, fs = sf.read(file_path, dtype='float32')
+        default_out, vb_out = find_audio_output_devices()
+
+        threads = []
+        if vb_out is not None and vb_out != default_out:
+            t_vb = threading.Thread(target=lambda: sd.play(data, fs, device=vb_out, blocking=True))
+            threads.append(t_vb)
+            t_vb.start()
+
+        t_spk = threading.Thread(target=lambda: sd.play(data, fs, device=default_out, blocking=True))
+        threads.append(t_spk)
+        t_spk.start()
+
+        for t in threads:
+            t.join()
+
+    except Exception as e:
+        print(f"Audio Playback Warning: {e}, falling back to winsound...")
+        try:
+            winsound.PlaySound(file_path, winsound.SND_FILENAME)
+        except Exception:
+            pass
+
 # -------------------- VISION & SOCIAL AWARENESS LOOP --------------------
 
 def vision_monitor_loop():
     global current_frame, current_visual_state, current_detected_objects
     global last_seen_person, last_interaction_time, crowd_start_time, crowd_alerted
 
-    print("--- [EYES] Initializing Vision Engine (YOLOv8 + DeepFace)... ---")
+    print("--- [EYES] Initializing Vision Engine (YOLOv8 + Diagnostic Window)... ---")
     yolo = YOLO("yolov8n.pt")
     cap = cv2.VideoCapture(0)
 
@@ -242,6 +289,7 @@ def vision_monitor_loop():
         print("--- [EYES] Camera not found or busy. ---")
         return
 
+    cv2.namedWindow("Myra's Eyes", cv2.WINDOW_NORMAL)
     last_deepface_check = 0
     deepface_interval = 3.0
     detected_name = "Scanning..."
@@ -272,6 +320,7 @@ def vision_monitor_loop():
 
         detected_items = list(set(detected_items))
         current_detected_objects = detected_items
+        display_frame = yolo_results.plot()
 
         # 2. Crowd Lingering Detection (3-4 people for > 2 mins)
         if person_count >= 3:
@@ -280,11 +329,11 @@ def vision_monitor_loop():
             elif (now - crowd_start_time > 120) and not crowd_alerted:
                 crowd_alerted = True
                 spontaneous_line = "Hey Mallu... are you going to introduce your friends to me or just leave me hanging? 😗"
-                print(f"\n✨ [MYRA GROUP TRIGGER]: {spontaneous_line}")
+                print(f"\n[MYRA GROUP TRIGGER]: {spontaneous_line}")
                 trigger_vmc_expression("Surprised", 1.0, duration=3)
                 audio_file = generate_voice(spontaneous_line, "interruption.wav")
                 if audio_file:
-                    winsound.PlaySound(audio_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
+                    threading.Thread(target=play_audio, args=(audio_file,), daemon=True).start()
         else:
             crowd_start_time = None
             crowd_alerted = False
@@ -316,7 +365,7 @@ def vision_monitor_loop():
                         print(f"\n[MYRA JEALOUSY TEASE]: {jealous_tease}")
                         audio_file = generate_voice(jealous_tease, "interruption.wav")
                         if audio_file:
-                            winsound.PlaySound(audio_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
+                            threading.Thread(target=play_audio, args=(audio_file,), daemon=True).start()
 
             except Exception:
                 pass
@@ -327,9 +376,20 @@ def vision_monitor_loop():
         # Update high-accuracy cached visual state for the LLM
         objects_str = ", ".join(detected_items) if detected_items else "nothing in hands"
         current_visual_state = f"Target in view: {detected_name}. Mood: {dominant_mood}. Holding/Nearby Objects: {objects_str}. People in room: {person_count}."
-        time.sleep(0.03)
+
+        # 4. Render On-Screen HUD Window ("Myra's Eyes")
+        cv2.rectangle(display_frame, (0, 0), (640, 75), (0, 0, 0), -1)
+        cv2.putText(display_frame, f"TARGET: {detected_name.upper()} | PEOPLE: {person_count}", (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+        cv2.putText(display_frame, f"MOOD: {dominant_mood.upper()} | OBJS: {objects_str[:35]}", (15, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 144, 30), 2)
+
+        cv2.imshow("Myra's Eyes", display_frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+        time.sleep(0.01)
 
     cap.release()
+    cv2.destroyAllWindows()
 
 # -------------------- PPT & TASK AUTOMATION --------------------
 
@@ -354,10 +414,23 @@ def parse_presentation(file_path):
 
 app = FastAPI(title="Myra AI Assistant Backend", version="2.0")
 
+def warmup_ollama():
+    """Warms up Ollama in background so first user request doesn't time out."""
+    try:
+        print("--- [BRAIN] Warming up Ollama model in VRAM... ---")
+        requests.post(
+            "http://localhost:11434/api/chat",
+            json={"model": "myra", "messages": [{"role": "user", "content": "hi"}], "stream": False},
+            timeout=40
+        )
+        print("--- [BRAIN] Ollama is warm and ready! ---")
+    except Exception as e:
+        print(f"--- [BRAIN] Ollama warmup note: {e} ---")
+
 @app.on_event("startup")
 def startup_event():
-    t = threading.Thread(target=vision_monitor_loop, daemon=True)
-    t.start()
+    threading.Thread(target=vision_monitor_loop, daemon=True).start()
+    threading.Thread(target=warmup_ollama, daemon=True).start()
 
 class ChatRequest(BaseModel):
     message: str
@@ -381,7 +454,6 @@ def chat(request: ChatRequest):
             cursor.execute("SELECT role, content FROM conversations ORDER BY id DESC LIMIT 8")
             rows = cursor.fetchall()
             for r in reversed(rows):
-                # Clean prior emotion tags from history
                 clean_content = re.sub(r"\[EMOTE:\s*\w+\]", "", r["content"]).strip()
                 history.append({"role": r["role"], "content": clean_content})
     except Exception as e:
@@ -405,19 +477,18 @@ def chat(request: ChatRequest):
     messages.extend(history)
     messages.append({"role": "user", "content": current_prompt})
 
-    # 4. Query Ollama LLaMA 3
+    # 4. Query Ollama LLaMA 3 (Timeout increased to 60s)
     try:
         ollama_res = requests.post(
             "http://localhost:11434/api/chat",
             json={"model": "myra", "messages": messages, "stream": False},
-            timeout=15
+            timeout=60
         )
         if ollama_res.status_code != 200:
-            # Fallback to llama3 base model if myra tag is unavailable
             ollama_res = requests.post(
                 "http://localhost:11434/api/chat",
                 json={"model": "llama3", "messages": messages, "stream": False},
-                timeout=15
+                timeout=60
             )
         raw_reply = ollama_res.json()["message"]["content"]
     except Exception as e:
