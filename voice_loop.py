@@ -19,14 +19,18 @@ import asyncio
 
 # -------- Settings --------
 
-SAMPLE_RATE = 16000        # Native Whisper sampling rate (eliminates resampling lag)
-THRESHOLD = 0.02           # Speech detection volume threshold
-SILENCE_LIMIT = 1.8        # Seconds of silence before finalizing sentence
+SAMPLE_RATE = 16000        # Native Whisper sampling rate
+THRESHOLD = 0.008          # RMS speech detection volume threshold
+SILENCE_LIMIT = 1.2        # Seconds of silence after speech to finish utterance
+MAX_RECORD_TIME = 8.0      # Hard maximum recording duration (prevents infinite loop/getting stuck)
 MAX_IDLE_TIME = 15         # Max silence before checking idle
 ACTIVE_TIMEOUT = 35        # Seconds of inactivity before sleeping
 
 BACKEND_URL = "http://127.0.0.1:8000/chat"
-WAKE_WORDS = ["myra", "maira", "myrah", "mira", "maya", "aira", "mera"]
+WAKE_WORDS = [
+    "myra", "maira", "myrah", "mira", "maya", "aira", "mera", "mayra",
+    "माइरा", "मायरा", "मीरा", "मईरा"
+]
 
 EXIT_LINES = [
     "Hmm, fine. I will pretend I was not waiting anyway.",
@@ -104,7 +108,7 @@ def wake_detected(text):
     words = text.split()
     for word in words:
         for wake in WAKE_WORDS:
-            if difflib.SequenceMatcher(None, wake, word).ratio() > 0.7:
+            if difflib.SequenceMatcher(None, wake, word).ratio() > 0.7 or wake in word:
                 return True
     return False
 
@@ -141,6 +145,7 @@ def record_audio_in_memory():
     audio_chunks = []
     silence_start = None
     speech_started = False
+    speech_start_time = None
     idle_start = time.time()
 
     try:
@@ -156,24 +161,30 @@ def record_audio_in_memory():
                     return None
 
                 data, _ = stream.read(1024)
-                volume = np.linalg.norm(data)
+                rms = np.sqrt(np.mean(data**2))
 
                 # Timeout if no speech begins
                 if not speech_started:
                     if time.time() - idle_start > MAX_IDLE_TIME:
                         return None
-
-                if volume > THRESHOLD:
-                    speech_started = True
-                    silence_start = None
-                    audio_chunks.append(data.flatten())
+                    if rms > THRESHOLD:
+                        speech_started = True
+                        speech_start_time = time.time()
+                        silence_start = None
+                        audio_chunks.append(data.flatten())
                 else:
-                    if speech_started:
+                    audio_chunks.append(data.flatten())
+                    # Hard cap: prevent getting stuck in noisy rooms
+                    if time.time() - speech_start_time > MAX_RECORD_TIME:
+                        break
+
+                    if rms < THRESHOLD:
                         if silence_start is None:
                             silence_start = time.time()
                         elif time.time() - silence_start > SILENCE_LIMIT:
                             break
-                        audio_chunks.append(data.flatten())
+                    else:
+                        silence_start = None
 
     except Exception as e:
         print(f"Mic error: {e}")
@@ -184,8 +195,8 @@ def record_audio_in_memory():
 
     audio_arr = np.concatenate(audio_chunks)
 
-    # Minimum speech filter (at least 0.6 seconds)
-    if len(audio_arr) < SAMPLE_RATE * 0.6:
+    # Minimum speech filter (at least 0.5 seconds)
+    if len(audio_arr) < SAMPLE_RATE * 0.5:
         return None
 
     return audio_arr
