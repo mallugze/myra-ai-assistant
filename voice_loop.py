@@ -137,7 +137,7 @@ def safe_play(file_path):
         time.sleep(0.4)
 
 def record_audio_in_memory():
-    """Captures audio directly into a numpy buffer in RAM (Zero Disk I/O)."""
+    """Captures audio directly into a numpy buffer in RAM with live terminal feedback."""
     global is_speaking
     if is_speaking:
         return None
@@ -147,6 +147,11 @@ def record_audio_in_memory():
     speech_started = False
     speech_start_time = None
     idle_start = time.time()
+
+    if is_active:
+        print("\r🎧 [LISTENING] Myra is listening to you... (Speak now)      ", end="", flush=True)
+    else:
+        print("\r💤 [STANDBY] Say 'Myra' to wake her up...                  ", end="", flush=True)
 
     try:
         with sd.InputStream(
@@ -171,6 +176,7 @@ def record_audio_in_memory():
                         speech_started = True
                         speech_start_time = time.time()
                         silence_start = None
+                        print("\r🔴 [RECORDING...] Hearing you speak...                     ", end="", flush=True)
                         audio_chunks.append(data.flatten())
                 else:
                     audio_chunks.append(data.flatten())
@@ -187,7 +193,7 @@ def record_audio_in_memory():
                         silence_start = None
 
     except Exception as e:
-        print(f"Mic error: {e}")
+        print(f"\nMic error: {e}")
         return None
 
     if not audio_chunks:
@@ -204,6 +210,7 @@ def record_audio_in_memory():
 def transcribe_audio(audio_array):
     """Transcribes in-memory float32 audio buffer with Faster-Whisper."""
     global whisper_model
+    print("\r⚡ [TRANSCRIBING...] Processing voice on GPU...             ", end="", flush=True)
     try:
         segments, info = whisper_model.transcribe(
             audio_array,
@@ -212,9 +219,10 @@ def transcribe_audio(audio_array):
             vad_parameters=dict(min_silence_duration_ms=500)
         )
         text = " ".join([segment.text for segment in segments]).strip()
+        print("\r" + " " * 65 + "\r", end="", flush=True)
         return text
     except Exception as e:
-        print(f"Transcription Notice ({e}), switching to CPU fallback...")
+        print(f"\nTranscription Notice ({e}), switching to CPU fallback...")
         try:
             whisper_model = WhisperModel("medium", device="cpu", compute_type="int8")
             segments, info = whisper_model.transcribe(
@@ -224,19 +232,22 @@ def transcribe_audio(audio_array):
                 vad_parameters=dict(min_silence_duration_ms=500)
             )
             text = " ".join([segment.text for segment in segments]).strip()
+            print("\r" + " " * 65 + "\r", end="", flush=True)
             return text
         except Exception as cpu_err:
-            print(f"Transcription Error: {cpu_err}")
+            print(f"\nTranscription Error: {cpu_err}")
             return ""
 
 def send_to_myra(text):
     """Sends text to Myra FastAPI backend."""
+    print("🧠 [MYRA THINKING...] Formulating witty response...", end="", flush=True)
     try:
         response = requests.post(BACKEND_URL, json={"message": text}, timeout=60)
         data = response.json()
+        print("\r" + " " * 65 + "\r", end="", flush=True)
         return data.get("response"), data.get("audio_file")
     except Exception as e:
-        print(f"Backend Connection Error: {e}")
+        print(f"\nBackend Connection Error: {e}")
         return None, None
 
 def speak_direct(text, output_file="exit.wav"):
