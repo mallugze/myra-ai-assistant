@@ -111,23 +111,8 @@ def wake_detected(text):
 import soundfile as sf
 import threading
 
-def find_audio_output_devices():
-    """Finds default speakers and VB-Cable Input devices."""
-    default_out = sd.default.device[1]
-    vb_cable_out = None
-    try:
-        for i, dev in enumerate(sd.query_devices()):
-            if dev['max_output_channels'] > 0:
-                name_lower = dev['name'].lower()
-                if "cable input" in name_lower or "cable in" in name_lower:
-                    vb_cable_out = i
-                    break
-    except Exception:
-        pass
-    return default_out, vb_cable_out
-
 def safe_play(file_path):
-    """Plays audio through Speakers and VB-Audio Virtual Cable for VSeeFace lip-sync simultaneously."""
+    """Plays audio cleanly through active sound device without double-echo."""
     global is_speaking
     if not file_path or not os.path.exists(file_path):
         return
@@ -135,21 +120,8 @@ def safe_play(file_path):
     is_speaking = True
     try:
         data, fs = sf.read(file_path, dtype='float32')
-        default_out, vb_out = find_audio_output_devices()
-
-        threads = []
-        if vb_out is not None and vb_out != default_out:
-            t_vb = threading.Thread(target=lambda: sd.play(data, fs, device=vb_out, blocking=True))
-            threads.append(t_vb)
-            t_vb.start()
-
-        t_spk = threading.Thread(target=lambda: sd.play(data, fs, device=default_out, blocking=True))
-        threads.append(t_spk)
-        t_spk.start()
-
-        for t in threads:
-            t.join()
-
+        sd.play(data, fs)
+        sd.wait()
     except Exception as e:
         print(f"Audio Playback Warning: {e}, falling back to winsound...")
         try:
@@ -158,7 +130,7 @@ def safe_play(file_path):
             pass
     finally:
         is_speaking = False
-        time.sleep(0.3)
+        time.sleep(0.4)
 
 def record_audio_in_memory():
     """Captures audio directly into a numpy buffer in RAM (Zero Disk I/O)."""
@@ -172,7 +144,6 @@ def record_audio_in_memory():
     idle_start = time.time()
 
     try:
-        # Auto-select default input device
         with sd.InputStream(
             samplerate=SAMPLE_RATE,
             channels=1,
@@ -261,8 +232,16 @@ def speak_direct(text, output_file="exit.wav"):
     """Synthesizes and plays a direct voice line (for exit/idle lines)."""
     try:
         async def run():
+            temp_mp3 = "temp_direct.mp3"
             comm = edge_tts.Communicate(text, "en-US-AnaNeural")
-            await comm.save(output_file)
+            await comm.save(temp_mp3)
+            data, sr = sf.read(temp_mp3)
+            sf.write(output_file, data, sr, subtype='PCM_16')
+            try:
+                os.remove(temp_mp3)
+            except Exception:
+                pass
+
         asyncio.run(run())
         safe_play(output_file)
     except Exception as e:

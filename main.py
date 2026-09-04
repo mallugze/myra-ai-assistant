@@ -202,13 +202,21 @@ def clean_for_tts(text):
     return text if text else "Hmm."
 
 async def synthesize_edge_tts(text, output_file, voice=DEFAULT_VOICE):
-    """Generates sweet anime audio via Edge-TTS."""
-    # Check if text contains Devanagari Hindi characters
+    """Generates sweet anime audio via Edge-TTS converted to crystal-clear PCM WAV."""
     if re.search(r"[\u0900-\u097F]", text):
         voice = HINDI_VOICE
 
+    temp_mp3 = "temp_tts.mp3"
     communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_file)
+    await communicate.save(temp_mp3)
+
+    # Convert MP3 to clean 24kHz 16-bit PCM WAV for perfect playback
+    data, sr = sf.read(temp_mp3)
+    sf.write(output_file, data, sr, subtype='PCM_16')
+    try:
+        os.remove(temp_mp3)
+    except Exception:
+        pass
 
 def generate_voice(text, output_file="output.wav"):
     """High quality fast voice generation with automatic fallback."""
@@ -228,46 +236,18 @@ def generate_voice(text, output_file="output.wav"):
                 print(f"--- [TTS] Silero failed: {silero_err} ---")
     return None
 
-# -------------------- AUDIO OUTPUT ROUTING (SPEAKERS + VB-CABLE) --------------------
+# -------------------- AUDIO OUTPUT ROUTING --------------------
 import sounddevice as sd
 
-def find_audio_output_devices():
-    """Finds default speakers and VB-Cable Input devices."""
-    default_out = sd.default.device[1]
-    vb_cable_out = None
-    try:
-        for i, dev in enumerate(sd.query_devices()):
-            if dev['max_output_channels'] > 0:
-                name_lower = dev['name'].lower()
-                if "cable input" in name_lower or "cable in" in name_lower:
-                    vb_cable_out = i
-                    break
-    except Exception:
-        pass
-    return default_out, vb_cable_out
-
 def play_audio(file_path):
-    """Plays audio through Speakers and VB-Audio Virtual Cable for VSeeFace lip-sync simultaneously."""
+    """Plays audio cleanly without double-echo or stutter."""
     if not file_path or not os.path.exists(file_path):
         return
 
     try:
         data, fs = sf.read(file_path, dtype='float32')
-        default_out, vb_out = find_audio_output_devices()
-
-        threads = []
-        if vb_out is not None and vb_out != default_out:
-            t_vb = threading.Thread(target=lambda: sd.play(data, fs, device=vb_out, blocking=True))
-            threads.append(t_vb)
-            t_vb.start()
-
-        t_spk = threading.Thread(target=lambda: sd.play(data, fs, device=default_out, blocking=True))
-        threads.append(t_spk)
-        t_spk.start()
-
-        for t in threads:
-            t.join()
-
+        sd.play(data, fs)
+        sd.wait()
     except Exception as e:
         print(f"Audio Playback Warning: {e}, falling back to winsound...")
         try:
