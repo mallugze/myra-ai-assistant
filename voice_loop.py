@@ -115,8 +115,20 @@ def wake_detected(text):
 import soundfile as sf
 import threading
 
+def get_playback_device():
+    """Finds VB-Audio Cable Input for VSeeFace lip-sync, or falls back to default speakers."""
+    devs = sd.query_devices()
+    for i, dev in enumerate(devs):
+        if dev['max_output_channels'] > 0 and dev['hostapi'] == 0:
+            if "cable input" in dev['name'].lower():
+                return i
+    for i, dev in enumerate(devs):
+        if dev['max_output_channels'] > 0 and "cable" in dev['name'].lower():
+            return i
+    return sd.default.device[1]
+
 def safe_play(file_path):
-    """Plays audio cleanly through active sound device without double-echo."""
+    """Plays audio through the lip-sync device (VB-Cable / Speakers)."""
     global is_speaking
     if not file_path or not os.path.exists(file_path):
         return
@@ -124,7 +136,8 @@ def safe_play(file_path):
     is_speaking = True
     try:
         data, fs = sf.read(file_path, dtype='float32')
-        sd.play(data, fs)
+        target_dev = get_playback_device()
+        sd.play(data, fs, device=target_dev)
         sd.wait()
     except Exception as e:
         print(f"Audio Playback Warning: {e}, falling back to winsound...")
