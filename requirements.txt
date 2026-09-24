@@ -16,3 +16,5 @@ nvidia-cudnn-cu12>=9.0.0
 edge-tts>=6.1.18
 torch>=2.0.0
 python-pptx>=1.0.0
+insightface>=1.0.1
+onnxruntime>=1.20.0
