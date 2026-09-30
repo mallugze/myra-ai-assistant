@@ -5,3 +5,4 @@ __pycache__/
 *.wav
 .env
 known_faces/
+*.bak

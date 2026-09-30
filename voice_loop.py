@@ -171,18 +171,10 @@ def wake_detected(text):
 
 import soundfile as sf
 import threading
+from audio_router import detect_audio_devices, play_audio_dual
 
-def get_playback_device():
-    """Finds VB-Audio Cable Input for VSeeFace lip-sync, or falls back to default speakers."""
-    devs = sd.query_devices()
-    for i, dev in enumerate(devs):
-        if dev['max_output_channels'] > 0 and dev['hostapi'] == 0:
-            if "cable input" in dev['name'].lower():
-                return i
-    for i, dev in enumerate(devs):
-        if dev['max_output_channels'] > 0 and "cable" in dev['name'].lower():
-            return i
-    return sd.default.device[1]
+# Intelligently discover and prioritize headphones / headset mic over built-in devices
+audio_cfg = detect_audio_devices(verbose=True)
 
 recent_myra_phrases = []  # list of (clean_text, timestamp)
 
@@ -241,17 +233,14 @@ def is_backend_speaking():
     return info.get("is_proactive_speaking", False) or info.get("is_audio_playing", False)
 
 def safe_play(file_path):
-    """Plays audio through the lip-sync device (VB-Cable / Speakers)."""
-    global is_speaking
+    """Plays audio through the prioritized output (Headphones/Speakers) and VB-Cable lip-sync."""
+    global is_speaking, audio_cfg
     if not file_path or not os.path.exists(file_path):
         return
 
     is_speaking = True
     try:
-        data, fs = sf.read(file_path, dtype='float32')
-        target_dev = get_playback_device()
-        sd.play(data, fs, device=target_dev)
-        sd.wait()
+        play_audio_dual(file_path, audio_cfg)
     except Exception as e:
         print(f"Audio Playback Warning: {e}, falling back to winsound...")
         try:
@@ -265,8 +254,9 @@ def safe_play(file_path):
 def record_audio_in_memory():
     """
     Captures audio directly into a numpy buffer in RAM with pre-roll buffering
-    and automatic gain control.
+    and automatic gain control, using the prioritized headset/mic device.
     """
+    global audio_cfg
     if is_backend_speaking():
         return None
 
@@ -289,13 +279,29 @@ def record_audio_in_memory():
     else:
         print("\r💤 [STANDBY] Say 'Myra' to wake her up...                  ", end="", flush=True)
 
+    in_dev = audio_cfg.get("input_device") if audio_cfg else None
     try:
-        with sd.InputStream(
+        stream = sd.InputStream(
+            device=in_dev,
             samplerate=SAMPLE_RATE,
             channels=1,
             blocksize=1024,
             dtype='float32'
-        ) as stream:
+        )
+    except Exception:
+        # Re-detect in case hardware was plugged or unplugged
+        audio_cfg = detect_audio_devices(verbose=False)
+        in_dev = audio_cfg.get("input_device")
+        stream = sd.InputStream(
+            device=in_dev,
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            blocksize=1024,
+            dtype='float32'
+        )
+
+    try:
+        with stream:
 
             while True:
                 chunk_counter += 1

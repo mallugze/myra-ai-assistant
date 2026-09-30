@@ -391,47 +391,65 @@ except Exception as e:
     print(f"--- [BRAIN] Silero Load Notice: {e} ---")
 
 def clean_for_tts(text):
-    """Removes bracketed actions, emotion tags, asterisks, and cleans text for natural speech synthesis."""
+    """Sanitizes text for Silero TTS, expanding acronyms like AI and LLM for natural speech."""
+    # 1. Expand AI and LLM to full spoken words for crisp natural delivery
+    text = re.sub(r'\bLLMs\b', 'Large Language Models', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bLLM-based\b', 'Large Language Model based', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bLLM\b', 'Large Language Model', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bAI-based\b', 'Artificial Intelligence based', text, flags=re.IGNORECASE)
+    text = re.sub(r'\b(AI|A\.I\.|ai)\b', 'Artificial Intelligence', text)
+
+    # 2. Clean em-dashes and symbols
     text = text.replace("—", ", ").replace("–", ", ").replace("...", ", ")
-    # 1. Strip all bracketed tags including multiline [VISION: ...], [EMOTE: ...], [Sigh], [VLM: ...]
     text = re.sub(r"\[[\s\S]*?\]", "", text)
-    # 2. Strip all parenthetical remarks (like this)
     text = re.sub(r"\([\s\S]*?\)", "", text)
-    # 3. Strip all roleplay asterisks *rolls eyes*, *smiles*, *dramatic pause*, *wink*
     text = re.sub(r"\*[\s\S]*?\*", "", text)
-    # 4. Convert ellipses (...) into a natural brief comma pause to prevent long robotic pauses in Silero
     text = re.sub(r"\.{2,}", ", ", text)
-    # 5. Remove non-speech special characters and emojis
     text = re.sub(r"[^\w\s.,?!'\-]", "", text)
-    # 6. Clean up repeated commas or spaces
     text = re.sub(r",\s*,+", ", ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text if text else "Hmm."
 
-def generate_voice(text, output_file="output.wav"):
-    """Generates Myra's original Silero voice with sentence chunking for long paragraphs."""
+def split_into_sentences(text):
+    """Splits text on sentence boundaries (. ! ?) and ellipsis (...) for natural pauses."""
+    pattern = r"(?<=[.!?])\s+|(?<=[.!?]['\"])\s+|(?<=\.\.\.)\s*"
+    raw_sentences = re.split(pattern, text.strip())
+    return [s.strip() for s in raw_sentences if s.strip()]
+
+def generate_voice(text, output_file="output.wav", pause_sec=0.55, ellipsis_pause_sec=0.45):
+    """Generates Myra's original Silero voice with natural breath pauses at full stops and sentence boundaries."""
     clean_text = clean_for_tts(text)
     if silero_model is not None:
         try:
-            sentences = re.split(r'(?<=[.!?])\s+', clean_text)
+            sentences = split_into_sentences(clean_text)
+            if not sentences:
+                return None
+
+            sample_rate = 48000
+            default_pause = np.zeros(int(sample_rate * pause_sec), dtype=np.float32)
+            ellipsis_pause = np.zeros(int(sample_rate * ellipsis_pause_sec), dtype=np.float32)
+
             audio_chunks = []
-            current_chunk = ""
-            for s in sentences:
-                if len(current_chunk) + len(s) < 220:
-                    current_chunk = f"{current_chunk} {s}".strip()
-                else:
-                    if current_chunk:
+            for i, s in enumerate(sentences):
+                if len(s) > 220:
+                    sub_chunks = [s[j:j+200] for j in range(0, len(s), 200)]
+                    for sub in sub_chunks:
                         with contextlib.redirect_stdout(io.StringIO()):
-                            a = silero_model.apply_tts(text=current_chunk, speaker='en_0', sample_rate=48000)
+                            a = silero_model.apply_tts(text=sub, speaker='en_0', sample_rate=sample_rate)
                         audio_chunks.append(a.numpy())
-                    current_chunk = s
-            if current_chunk:
-                with contextlib.redirect_stdout(io.StringIO()):
-                    a = silero_model.apply_tts(text=current_chunk, speaker='en_0', sample_rate=48000)
-                audio_chunks.append(a.numpy())
+                else:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        a = silero_model.apply_tts(text=s, speaker='en_0', sample_rate=sample_rate)
+                    audio_chunks.append(a.numpy())
+
+                if i < len(sentences) - 1:
+                    if s.endswith("..."):
+                        audio_chunks.append(ellipsis_pause)
+                    else:
+                        audio_chunks.append(default_pause)
 
             full_audio = np.concatenate(audio_chunks)
-            sf.write(output_file, full_audio, 48000)
+            sf.write(output_file, full_audio, sample_rate)
             return output_file
         except Exception as e:
             print(f"--- [TTS] Silero Error: {e} ---")

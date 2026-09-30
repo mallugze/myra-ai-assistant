@@ -28,6 +28,10 @@ import io
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from presentation_manager import presentation_manager, CUSTOM_SLIDE_SCRIPTS, SLIDE_EMOTES
+from audio_router import detect_audio_devices, play_audio_dual
+
+# Discover and prioritize audio devices (Headphones vs Built-in Speakers)
+audio_cfg = detect_audio_devices(verbose=True)
 
 BACKEND_URL = "http://127.0.0.1:8000"
 
@@ -47,7 +51,15 @@ except Exception as e:
     print(f"--- [VOICE] Silero Load Notice: {e} ---")
 
 def clean_for_tts(text):
-    """Removes bracketed tags, emojis, and roleplay markers for clean, natural Silero speech."""
+    """Removes bracketed tags, emojis, roleplay markers, and expands acronyms like AI and LLM for natural speech."""
+    # 1. Expand AI and LLM to full spoken words for crisp natural delivery
+    text = re.sub(r'\bLLMs\b', 'Large Language Models', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bLLM-based\b', 'Large Language Model based', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bLLM\b', 'Large Language Model', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bAI-based\b', 'Artificial Intelligence based', text, flags=re.IGNORECASE)
+    text = re.sub(r'\b(AI|A\.I\.|ai)\b', 'Artificial Intelligence', text)
+
+    # 2. Clean em-dashes and symbols
     text = text.replace("—", ", ").replace("–", ", ").replace("...", ", ")
     text = re.sub(r"\[[\s\S]*?\]", "", text)
     text = re.sub(r"\([\s\S]*?\)", "", text)
@@ -58,30 +70,52 @@ def clean_for_tts(text):
     text = re.sub(r"\s+", " ", text).strip()
     return text if text else "Hmm."
 
-def generate_real_voice(text, output_file="terminal_output.wav"):
-    """Synthesizes Myra's REAL original Silero voice (speaker en_0 at 48kHz) with sentence chunking."""
+def split_into_sentences(text):
+    """Splits text on sentence boundaries (. ! ?) and ellipsis (...) for natural presentation pauses."""
+    pattern = r"(?<=[.!?])\s+|(?<=[.!?]['\"])\s+|(?<=\.\.\.)\s*"
+    raw_sentences = re.split(pattern, text.strip())
+    return [s.strip() for s in raw_sentences if s.strip()]
+
+def generate_real_voice(text, output_file="terminal_output.wav", pause_sec=0.55, ellipsis_pause_sec=0.45):
+    """
+    Synthesizes Myra's REAL original Silero voice (speaker en_0 at 48kHz)
+    with natural pauses at every full stop, exclamation, question mark, and ellipsis.
+    Prevents rushed monotone reading and gives natural presenter cadence.
+    """
     clean_text = clean_for_tts(text)
     if silero_model is not None:
         try:
-            sentences = re.split(r'(?<=[.!?])\s+', clean_text)
+            sentences = split_into_sentences(clean_text)
+            if not sentences:
+                return None
+
+            sample_rate = 48000
+            default_pause = np.zeros(int(sample_rate * pause_sec), dtype=np.float32)
+            ellipsis_pause = np.zeros(int(sample_rate * ellipsis_pause_sec), dtype=np.float32)
+
             audio_chunks = []
-            current_chunk = ""
-            for s in sentences:
-                if len(current_chunk) + len(s) < 220:
-                    current_chunk = f"{current_chunk} {s}".strip()
-                else:
-                    if current_chunk:
+            for i, s in enumerate(sentences):
+                # Silero max length safety (if an unusually long run-on sentence exceeds 220 chars)
+                if len(s) > 220:
+                    sub_chunks = [s[j:j+200] for j in range(0, len(s), 200)]
+                    for sub in sub_chunks:
                         with contextlib.redirect_stdout(io.StringIO()):
-                            a = silero_model.apply_tts(text=current_chunk, speaker='en_0', sample_rate=48000)
+                            a = silero_model.apply_tts(text=sub, speaker='en_0', sample_rate=sample_rate)
                         audio_chunks.append(a.numpy())
-                    current_chunk = s
-            if current_chunk:
-                with contextlib.redirect_stdout(io.StringIO()):
-                    a = silero_model.apply_tts(text=current_chunk, speaker='en_0', sample_rate=48000)
-                audio_chunks.append(a.numpy())
+                else:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        a = silero_model.apply_tts(text=s, speaker='en_0', sample_rate=sample_rate)
+                    audio_chunks.append(a.numpy())
+
+                # Add natural pause after sentence ending punctuation
+                if i < len(sentences) - 1:
+                    if s.endswith("..."):
+                        audio_chunks.append(ellipsis_pause)
+                    else:
+                        audio_chunks.append(default_pause)
 
             full_audio = np.concatenate(audio_chunks)
-            sf.write(output_file, full_audio, 48000)
+            sf.write(output_file, full_audio, sample_rate)
             return output_file
         except Exception as e:
             print(f"(Silero Speech Synthesis Notice: {e})")
@@ -96,18 +130,10 @@ def is_backend_online():
         return False
 
 def play_audio(audio_path):
-    """Plays audio through default sound device or winsound fallback."""
+    """Plays audio through prioritized Headphones/Speakers and VB-Cable."""
     if not audio_path or not os.path.exists(audio_path):
         return
-    try:
-        data, fs = sf.read(audio_path)
-        sd.play(data, fs)
-        sd.wait()
-    except Exception:
-        try:
-            winsound.PlaySound(audio_path, winsound.SND_FILENAME)
-        except Exception:
-            pass
+    play_audio_dual(audio_path, audio_cfg)
 
 def ensure_ollama_running():
     """Checks if Ollama is running on port 11434, and auto-starts it if not."""
@@ -139,30 +165,40 @@ def ensure_ollama_running():
         print(f"--- [BRAIN] Notice auto-starting Ollama: {e} ---")
     return False
 
+PRESENTATION_SYSTEM_PROMPT = """You are Myra, Mallu's witty, charming, playfully smug, and teasing AI companion.
+You are preparing or presenting your 7-slide presentation deck:
+The Project Team: Akhilesh, Chaitany, Channaveer, Manish, and Mallu (your creator and boyfriend).
+The 7 Slides:
+- Slide 1: Introduction – Meet Myra (Team introduction: Akhilesh, Chaitany, Channaveer, Manish helped out, but you are the real star, beauty, and brains; teasing Mallu).
+- Slide 2: My Brain – Large Language Models (Core conversational brain, dynamic non-scripted multi-turn conversation, teasing Mallu's memory).
+- Slide 3: How I Experience the World – Multimodal AI (Voice listening, VLM vision, keeping an eye on Mallu).
+- Slide 4: Connecting Vision & Language (Reasoning about environment, roasting Mallu's repetitive t-shirt fashion).
+- Slide 5: Memory & Proactive Behavior (Persistent memory, proactive autonomous interruptions).
+- Slide 6: My Voice and Embodiment (Generative voice, 3D avatar, lip-sync, visual upgrade for Mallu).
+- Slide 7: Real-World Applications & The Future (Autonomous agents like Salesforce, teasing the audience about Reels and taking their jobs, closing with Q&A: 'Who's first?').
+
+Always stay in character: confident, playfully smug, affectionate yet sarcastic, especially towards Mallu.
+If asked how you will present the slides or to give your plan/pitch, walk through each slide and your presentation strategy vividly in character!
+"""
+
 def standalone_query_ollama(prompt, initial_emote=None):
-    """Queries Ollama directly for Q&A or audience questions."""
+    """Queries Ollama directly for Q&A, slide explanations, or presentation pitch."""
     ensure_ollama_running()
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are Myra, Mallu's clever, playful, and slightly smug waifu desktop AI companion. "
-                "You are presenting his college project. Answer questions cleverly and accurately in 2-3 engaging sentences."
-            )
-        },
+        {"role": "system", "content": PRESENTATION_SYSTEM_PROMPT},
         {"role": "user", "content": prompt}
     ]
     try:
         res = requests.post(
             "http://localhost:11434/api/chat",
             json={"model": "myra", "messages": messages, "stream": False},
-            timeout=20
+            timeout=120
         )
         if res.status_code != 200:
             res = requests.post(
                 "http://localhost:11434/api/chat",
                 json={"model": "llama3", "messages": messages, "stream": False},
-                timeout=20
+                timeout=120
             )
         if res.status_code == 200:
             content = res.json()["message"]["content"]
@@ -172,7 +208,7 @@ def standalone_query_ollama(prompt, initial_emote=None):
     except Exception as e:
         print(f"(Ollama Notice: {e})")
 
-    return f"[{initial_emote or 'smile'}] If you have any questions about Myra, feel free to ask Mallu or me!"
+    return f"[{initial_emote or 'smile'}] If you have any questions about Myra or the presentation, feel free to ask Mallu or me!"
 
 def display_slide_card(slide_num):
     """Prints a formatted card for the slide in terminal showing its topic."""
@@ -323,6 +359,7 @@ def print_help():
   next, n          : Manually advance to next slide
   prev, p          : Manually go back to previous slide
   explain, r       : Re-speak the current slide
+  plan, pitch      : Ask Myra how she will present these 7 slides in character
   ask <question>   : Ask Myra a question (e.g. 'ask are you really Mallu's girlfriend?')
   list, slides     : View all 7 slide scripts
   stop             : Stop presentation
@@ -374,6 +411,16 @@ def main():
 
         elif cmd_lower in ["list", "slides", "l"]:
             list_all_slides()
+
+        elif cmd_lower in ["plan", "pitch", "preview", "how will you present", "strategy"]:
+            question = "How will you present these 7 slides being in your character? Walk me through your plan and how you'll present each slide."
+            print(f"\n❓ Asking Myra: '{question}'...\n")
+            speech = standalone_query_ollama(question, initial_emote="smug")
+            print_myra_speech(speech)
+            audio = generate_real_voice(speech)
+            if audio:
+                print("🔊 Speaking response in Real Voice (en_0)...")
+                play_audio(audio)
 
         elif cmd_lower in ["start", "s", "1", "present", "begin", "auto"]:
             run_auto_presentation(start_from_slide=1)
