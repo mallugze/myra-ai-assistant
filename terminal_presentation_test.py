@@ -113,6 +113,10 @@ def generate_real_voice(text, output_file="terminal_output.wav", pause_sec=0.55,
                         audio_chunks.append(ellipsis_pause)
                     else:
                         audio_chunks.append(default_pause)
+                else:
+                    # Generous post-roll tail silence (750ms) so final word is never cut off
+                    postroll_silence = np.zeros(int(sample_rate * 0.75), dtype=np.float32)
+                    audio_chunks.append(postroll_silence)
 
             full_audio = np.concatenate(audio_chunks)
             sf.write(output_file, full_audio, sample_rate)

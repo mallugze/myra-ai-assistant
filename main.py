@@ -24,8 +24,11 @@ import contextlib
 from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pythonosc import udp_client
+from system_monitor import system_monitor
 from ultralytics import YOLO
 import edge_tts
 from pptx import Presentation
@@ -447,12 +450,18 @@ def generate_voice(text, output_file="output.wav", pause_sec=0.55, ellipsis_paus
                         audio_chunks.append(ellipsis_pause)
                     else:
                         audio_chunks.append(default_pause)
+                else:
+                    # Generous post-roll tail silence (750ms) so final word is never cut off
+                    postroll_silence = np.zeros(int(sample_rate * 0.75), dtype=np.float32)
+                    audio_chunks.append(postroll_silence)
 
             full_audio = np.concatenate(audio_chunks)
             sf.write(output_file, full_audio, sample_rate)
+            system_monitor.log("VOICE", "SUCCESS", f"Synthesized speech ({len(clean_text)} chars) to {output_file}")
             return output_file
         except Exception as e:
             print(f"--- [TTS] Silero Error: {e} ---")
+            system_monitor.log("VOICE", "ERROR", f"Silero synthesis failure: {e}", fix_tip="Check PyTorch audio buffers.")
     return None
 
 # -------------------- AUDIO OUTPUT ROUTING (LIP-SYNC & SPEAKERS) --------------------
@@ -941,10 +950,40 @@ class AsyncVisionEngine:
             time.sleep(0.03)
 
 vision_engine = AsyncVisionEngine()
+ENABLE_BACKGROUND_CAMERA = False  # Set to True only if background webcam tracking is explicitly desired
+active_camera_instance = None
+camera_thread = None
+
+def start_camera_background():
+    """Starts the camera capture loop in a background thread on demand."""
+    global camera_thread, active_camera_instance
+    if camera_thread is not None and camera_thread.is_alive():
+        return False
+    vision_engine.running = True
+    camera_thread = threading.Thread(target=vision_monitor_loop, daemon=True)
+    camera_thread.start()
+    system_monitor.log("EYES", "INFO", "Webcam hardware started by user.")
+    return True
+
+def stop_camera_background():
+    """Immediately stops the camera loop and releases the webcam hardware."""
+    global camera_thread, active_camera_instance, current_frame
+    vision_engine.running = False
+    if active_camera_instance is not None:
+        try:
+            active_camera_instance.release()
+        except Exception:
+            pass
+        active_camera_instance = None
+    system_monitor.update_frame(None)
+    current_frame = None
+    cv2.destroyAllWindows()
+    system_monitor.log("EYES", "INFO", "Webcam hardware stopped and released.")
+    return True
 
 def vision_monitor_loop():
     """Main camera capture & render loop running at silky-smooth 30+ FPS."""
-    global current_frame, system_status, face_app_instance
+    global current_frame, system_status, face_app_instance, active_camera_instance
 
     print("--- [EYES] Initializing High-Performance Vision Engine (YOLO11s + InsightFace)... ---")
     yolo = YOLO("yolo11s.pt")
@@ -974,80 +1013,88 @@ def vision_monitor_loop():
     ai_thread.start()
 
     cam = ThreadedCamera(0)
+    active_camera_instance = cam
     if not cam.isOpened():
         print("--- [EYES] Camera not found or busy. ---")
+        active_camera_instance = None
         return
 
-    cv2.namedWindow("Myra's Eyes", cv2.WINDOW_NORMAL)
+    try:
+        cv2.namedWindow("Myra's Eyes", cv2.WINDOW_NORMAL)
 
-    while vision_engine.running:
-        ret, frame = cam.read()
-        if not ret or frame is None:
-            time.sleep(0.01)
-            continue
+        while vision_engine.running:
+            ret, frame = cam.read()
+            if not ret or frame is None:
+                time.sleep(0.01)
+                continue
 
-        current_frame = frame
-        display_frame = frame.copy()
-        h, w = frame.shape[:2]
+            current_frame = frame
+            display_frame = frame.copy()
+            h, w = frame.shape[:2]
 
-        # Feed latest frame to AI worker
-        with vision_engine.lock:
-            vision_engine.latest_raw_frame = frame
-        vision_engine.new_frame_event.set()
+            # Feed latest frame to AI worker
+            with vision_engine.lock:
+                vision_engine.latest_raw_frame = frame
+            vision_engine.new_frame_event.set()
 
-        # Grab cached detection results atomically
-        with vision_engine.lock:
-            faces = list(vision_engine.cached_faces)
-            objects = list(vision_engine.cached_objects)
-            person_count = vision_engine.cached_person_count
-            target_name = vision_engine.cached_target_name
-            objects_str = vision_engine.cached_objects_str
+            # Grab cached detection results atomically
+            with vision_engine.lock:
+                faces = list(vision_engine.cached_faces)
+                objects = list(vision_engine.cached_objects)
+                person_count = vision_engine.cached_person_count
+                target_name = vision_engine.cached_target_name
+                objects_str = vision_engine.cached_objects_str
 
-        # 1. Render Object Bounding Boxes (Subtle Cyan/Gray, 1px thickness)
-        for obj in objects:
-            clean_name = obj["name"]
-            x1, y1, x2, y2 = obj["bbox"]
-            cv2.rectangle(display_frame, (x1, y1), (x2, y2), (220, 180, 50), 1)
-            pill_w = len(clean_name) * 8 + 8
-            cv2.rectangle(display_frame, (x1, max(0, y1 - 16)), (x1 + pill_w, max(16, y1)), (220, 180, 50), -1)
-            cv2.putText(display_frame, clean_name, (x1 + 4, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+            # 1. Render Object Bounding Boxes (Subtle Cyan/Gray, 1px thickness)
+            for obj in objects:
+                clean_name = obj["name"]
+                x1, y1, x2, y2 = obj["bbox"]
+                cv2.rectangle(display_frame, (x1, y1), (x2, y2), (220, 180, 50), 1)
+                pill_w = len(clean_name) * 8 + 8
+                cv2.rectangle(display_frame, (x1, max(0, y1 - 16)), (x1 + pill_w, max(16, y1)), (220, 180, 50), -1)
+                cv2.putText(display_frame, clean_name, (x1 + 4, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
 
-        # 2. Render Face Bounding Boxes (Green for Known, Yellow/Amber for Unknown, 1px thickness)
-        for f in faces:
-            matched_name = f["name"]
-            sim = f["similarity"]
-            is_known = f["is_known"]
-            fx1, fy1, fx2, fy2 = f["bbox"]
+            # 2. Render Face Bounding Boxes (Green for Known, Yellow/Amber for Unknown, 1px thickness)
+            for f in faces:
+                matched_name = f["name"]
+                sim = f["similarity"]
+                is_known = f["is_known"]
+                fx1, fy1, fx2, fy2 = f["bbox"]
 
-            box_color = (0, 255, 0) if is_known else (0, 200, 255)
-            cv2.rectangle(display_frame, (fx1, fy1), (fx2, fy2), box_color, 1)
+                box_color = (0, 255, 0) if is_known else (0, 200, 255)
+                cv2.rectangle(display_frame, (fx1, fy1), (fx2, fy2), box_color, 1)
 
-            label_text = f"{matched_name} | {sim:.2f}" if is_known else f"Unknown | {sim:.2f}"
-            pill_w = len(label_text) * 8 + 10
-            cv2.rectangle(display_frame, (fx1, max(0, fy1 - 18)), (fx1 + pill_w, max(18, fy1)), box_color, -1)
-            cv2.putText(display_frame, label_text, (fx1 + 4, max(13, fy1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1)
+                label_text = f"{matched_name} | {sim:.2f}" if is_known else f"Unknown | {sim:.2f}"
+                pill_w = len(label_text) * 8 + 10
+                cv2.rectangle(display_frame, (fx1, max(0, fy1 - 18)), (fx1 + pill_w, max(18, fy1)), box_color, -1)
+                cv2.putText(display_frame, label_text, (fx1 + 4, max(13, fy1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1)
 
-        # 3. Render Clean Top HUD Banner Overlay (Ultra-fast slice alpha blend, 100x faster, zero full-frame copies)
-        banner = display_frame[0:32, 0:w]
-        dark_bar = np.full_like(banner, (20, 20, 20))
-        cv2.addWeighted(dark_bar, 0.70, banner, 0.30, 0, banner)
-        display_frame[0:32, 0:w] = banner
+            # 3. Render Clean Top HUD Banner Overlay (Ultra-fast slice alpha blend, 100x faster, zero full-frame copies)
+            banner = display_frame[0:32, 0:w]
+            dark_bar = np.full_like(banner, (20, 20, 20))
+            cv2.addWeighted(dark_bar, 0.70, banner, 0.30, 0, banner)
+            display_frame[0:32, 0:w] = banner
 
-        # Header Text
-        if presentation_manager.is_presenting:
-            ppt_stat = presentation_manager.get_status()
-            hud_text = f"STATUS: PRESENTING (Slide {ppt_stat['current_slide']}/{ppt_stat['total_slides']}) | TARGET: {target_name} | PEOPLE: {person_count} | OBJS: {objects_str[:25]}"
-        else:
-            hud_text = f"STATUS: {system_status} | TARGET: {target_name} | PEOPLE: {person_count} | OBJS: {objects_str[:30]}"
-        cv2.putText(display_frame, hud_text, (10, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1)
+            # Header Text
+            if presentation_manager.is_presenting:
+                ppt_stat = presentation_manager.get_status()
+                hud_text = f"STATUS: PRESENTING (Slide {ppt_stat['current_slide']}/{ppt_stat['total_slides']}) | TARGET: {target_name} | PEOPLE: {person_count} | OBJS: {objects_str[:25]}"
+            else:
+                hud_text = f"STATUS: {system_status} | TARGET: {target_name} | PEOPLE: {person_count} | OBJS: {objects_str[:30]}"
+            cv2.putText(display_frame, hud_text, (10, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1)
 
-        cv2.imshow("Myra's Eyes", display_frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+            # Update monitor stream frame
+            system_monitor.update_frame(display_frame)
 
-    vision_engine.running = False
-    cam.release()
-    cv2.destroyAllWindows()
+            cv2.imshow("Myra's Eyes", display_frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+    finally:
+        vision_engine.running = False
+        cam.release()
+        active_camera_instance = None
+        cv2.destroyAllWindows()
+        print("--- [EYES] Camera hardware released successfully. ---")
 
 # -------------------- PPT & TASK AUTOMATION --------------------
 
@@ -1086,12 +1133,19 @@ def warmup_ollama():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    threading.Thread(target=vision_monitor_loop, daemon=True).start()
+    system_monitor.log("SYSTEM", "SUCCESS", "FastAPI core online on port 8000. Camera hardware in standby mode.")
+    if ENABLE_BACKGROUND_CAMERA:
+        start_camera_background()
     threading.Thread(target=warmup_ollama, daemon=True).start()
     yield
-    vision_engine.running = False
+    system_monitor.log("SYSTEM", "WARN", "Shutting down backend services.")
+    stop_camera_background()
 
 app = FastAPI(title="Myra AI Assistant Backend", version="2.0", lifespan=lifespan)
+
+# Mount Frontend Static Assets
+if os.path.exists("frontend"):
+    app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 class ChatRequest(BaseModel):
     message: str
@@ -1170,6 +1224,7 @@ def chat(request: ChatRequest):
     user_message = request.message.strip()
     user_lower = user_message.lower()
     print(f"\n--- [USER] {user_message} ---")
+    system_monitor.log("BRAIN", "INFO", f"User input: '{user_message[:70]}'")
 
     # A. Check for Autonomous Presentation Voice Commands
     # 1. Stop presentation
@@ -1467,6 +1522,7 @@ def chat(request: ChatRequest):
     # 7. Apply VMC Emotion and generate Sweet Voice
     spoken_reply = apply_emotion_tag(raw_reply)
     print(f"--- [MYRA] {raw_reply} ---")
+    system_monitor.log("BRAIN", "SUCCESS", f"Myra reply generated: '{spoken_reply[:70]}'")
 
     # 8. Save to SQLite Memory
     try:
@@ -1538,6 +1594,87 @@ def learn_face(req: LearnPersonRequest):
         conn.commit()
 
     return {"status": "success", "message": f"Learned {req.name}'s face successfully!"}
+
+# -------------------- MONITOR & DIAGNOSTIC SYSTEM ROUTES --------------------
+
+class SkillTestRequest(BaseModel):
+    skill: str
+
+@app.get("/", response_class=FileResponse)
+@app.get("/monitor", response_class=FileResponse)
+def serve_monitor():
+    """Serves Myra's Neural Subsystem & Diagnostic Monitoring Frontend."""
+    index_file = os.path.join("frontend", "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+    return HTMLResponse("<h2>Myra Monitor index.html not found. Ensure frontend/ is present.</h2>")
+
+@app.get("/api/monitor/skills")
+def monitor_skills_endpoint():
+    """Returns comprehensive real-time telemetry across all 8 subsystems."""
+    silero_loaded = silero_model is not None
+    person_cnt = vision_engine.cached_person_count if hasattr(vision_engine, "cached_person_count") else 0
+    return system_monitor.get_full_status(
+        vision_engine=vision_engine,
+        primary_target_name=primary_target_name,
+        person_count=person_cnt,
+        detected_objects=current_detected_objects,
+        presentation_manager=presentation_manager,
+        silero_model_loaded=silero_loaded
+    )
+
+@app.post("/api/monitor/test_skill")
+def test_skill_endpoint(req: SkillTestRequest):
+    """Executes live diagnostic test on the requested subsystem."""
+    return system_monitor.test_skill(req.skill)
+
+@app.get("/api/monitor/logs")
+def monitor_logs_endpoint(limit: int = 100, level: str = None, subsystem: str = None):
+    """Fetches recent subsystem logs with optional filtering."""
+    return system_monitor.get_logs(limit=limit, level=level, subsystem=subsystem)
+
+def generate_mjpeg_stream():
+    """Yields live MJPEG video stream of Myra's Optical Vision Feed."""
+    while True:
+        frame = system_monitor.latest_display_frame
+        if frame is None:
+            # Standby animation canvas
+            blank = np.zeros((320, 520, 3), dtype=np.uint8)
+            cv2.putText(blank, "MYRA OPTICAL FEED - STANDBY", (80, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 242, 254), 1)
+            cv2.putText(blank, "Vision engine is starting or camera 0 is idle...", (70, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (120, 140, 160), 1)
+            ret, buffer = cv2.imencode('.jpg', blank)
+            time.sleep(0.1)
+        else:
+            ret, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+            time.sleep(0.033)
+
+        if ret:
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+
+@app.get("/api/monitor/video_feed")
+def video_feed_endpoint():
+    """Streams live optical perception view with bounding boxes as MJPEG."""
+    return StreamingResponse(generate_mjpeg_stream(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+# Camera on-demand lifecycle controls
+@app.post("/api/camera/start")
+def start_camera_endpoint():
+    """Starts the optical camera hardware stream on demand."""
+    started = start_camera_background()
+    return {"status": "started" if started else "already_running"}
+
+@app.post("/api/camera/stop")
+def stop_camera_endpoint():
+    """Stops the optical camera hardware stream and completely releases webcam hardware."""
+    stop_camera_background()
+    return {"status": "stopped", "message": "Camera hardware released."}
+
+@app.get("/api/camera/status")
+def camera_status_endpoint():
+    """Checks whether the camera hardware is currently active."""
+    active = vision_engine.running and (active_camera_instance is not None)
+    return {"active": active}
 
 # -------------------- ENTRY POINT --------------------
 

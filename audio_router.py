@@ -9,6 +9,7 @@ import time
 import threading
 import sounddevice as sd
 import soundfile as sf
+import numpy as np
 
 HEADPHONE_KEYWORDS = [
     'headset', 'headphone', 'rockerz', 'earphone',
@@ -150,6 +151,7 @@ def play_audio_dual(file_path: str, audio_config: dict = None):
     """
     Plays audio to the prioritized output device (Headphones/Speakers),
     and simultaneously routes audio to VB-Audio Cable for VSeeFace lip-sync if available.
+    Uses dedicated stream handles and hardware buffer drainage so words are never cut off.
     """
     if not file_path or not os.path.exists(file_path):
         return
@@ -163,19 +165,54 @@ def play_audio_dual(file_path: str, audio_config: dict = None):
     try:
         data, fs = sf.read(file_path, dtype='float32')
 
-        # If VB-Cable is available, play simultaneously in a background thread for VSeeFace lip-sync
+        # Add 400ms safety tail silence buffer to guarantee DAC / Bluetooth hardware flush
+        tail_silence = np.zeros(int(fs * 0.40), dtype=np.float32)
+        if data.ndim == 1:
+            data = np.concatenate([data, tail_silence])
+        else:
+            tail_silence = np.zeros((int(fs * 0.40), data.shape[1]), dtype=np.float32)
+            data = np.concatenate([data, tail_silence], axis=0)
+
+        streams = []
+        try:
+            s_out = sd.OutputStream(device=out_dev, channels=1 if data.ndim == 1 else data.shape[1], samplerate=fs)
+            s_out.start()
+            streams.append(s_out)
+        except Exception:
+            s_out = None
+
         if vb_dev is not None and vb_dev != out_dev:
-            def play_vb():
+            try:
+                s_vb = sd.OutputStream(device=vb_dev, channels=1 if data.ndim == 1 else data.shape[1], samplerate=fs)
+                s_vb.start()
+                streams.append(s_vb)
+            except Exception:
+                s_vb = None
+
+        if streams:
+            block_size = 2048
+            for i in range(0, len(data), block_size):
+                chunk = data[i:i + block_size]
+                for s in streams:
+                    try:
+                        s.write(chunk)
+                    except Exception:
+                        pass
+
+            for s in streams:
                 try:
-                    sd.play(data, fs, device=vb_dev)
-                    sd.wait()
+                    s.stop()
+                    s.close()
                 except Exception:
                     pass
-            threading.Thread(target=play_vb, daemon=True).start()
 
-        # Primary playback directly to user's headphones or speakers
-        sd.play(data, fs, device=out_dev)
-        sd.wait()
+            # Safety sleep for physical Bluetooth headphone speaker driver flush
+            time.sleep(0.25)
+        else:
+            sd.play(data, fs, device=out_dev)
+            sd.wait()
+            time.sleep(0.25)
+
     except Exception as e:
         print(f"--- [AUDIO ROUTER] Playback fallback: {e} ---")
         try:

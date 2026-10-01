@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MYRA // Neural Subsystem & Diagnostic Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- Ambient background glow layers -->
+  <div class="ambient-glow glow-cyan"></div>
+  <div class="ambient-glow glow-magenta"></div>
+  <div class="cyber-grid-overlay"></div>
+
+  <div class="app-container">
+    <!-- Top Navigation & Global Status Header -->
+    <header class="top-nav">
+      <div class="brand-group">
+        <div class="brand-avatar-ring">
+          <span class="avatar-icon">🎀</span>
+          <span class="pulse-indicator" id="global-pulse"></span>
+        </div>
+        <div class="brand-text">
+          <div class="brand-title">MYRA <span class="version-tag">OS 2.0</span></div>
+          <div class="brand-subtitle">NEURAL SUBSYSTEM & DIAGNOSTIC MONITOR</div>
+        </div>
+      </div>
+
+      <!-- Center Master Status Badge -->
+      <div class="master-status-card" id="master-status-card">
+        <div class="status-beacon" id="master-beacon"></div>
+        <div class="master-status-info">
+          <div class="status-label" id="master-status-label">INITIALIZING TELEMETRY...</div>
+          <div class="status-subtext" id="master-status-subtext">Scanning 8 subsystem circuits</div>
+        </div>
+      </div>
+
+      <!-- Quick Metrics & Actions -->
+      <div class="nav-controls">
+        <div class="metric-pill">
+          <span class="metric-label">UPTIME</span>
+          <span class="metric-val" id="uptime-val">--:--:--</span>
+        </div>
+        <div class="metric-pill">
+          <span class="metric-label">ACTIVE TARGET</span>
+          <span class="metric-val highlight-target" id="target-val">Mallu</span>
+        </div>
+        <button class="action-btn-primary" id="btn-scan-now" title="Force refresh system telemetry">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Scan Now
+        </button>
+      </div>
+    </header>
+
+    <!-- Incident / Error Alert Banner (Dynamically shown when errors exist) -->
+    <section class="alert-banner-container" id="alert-banner-container" style="display: none;">
+      <div class="alert-banner">
+        <div class="alert-icon-box">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <div class="alert-content">
+          <div class="alert-title" id="alert-banner-title">1 Critical Subsystem Fault Detected</div>
+          <div class="alert-desc" id="alert-banner-desc">Review the diagnostic report below to locate the root cause and recommended remediation.</div>
+        </div>
+        <button class="alert-action-btn" id="btn-jump-errors">Inspect Root Cause ↓</button>
+      </div>
+    </section>
+
+    <!-- Hero Telemetry Summary Strip -->
+    <section class="telemetry-strip">
+      <div class="telemetry-chip">
+        <div class="chip-icon">⚡</div>
+        <div class="chip-data">
+          <span class="chip-val" id="chip-active-count">8 / 8 Active</span>
+          <span class="chip-name">OPERATIONAL CIRCUITS</span>
+        </div>
+      </div>
+      <div class="telemetry-chip">
+        <div class="chip-icon">🧠</div>
+        <div class="chip-data">
+          <span class="chip-val" id="chip-brain-latency">-- ms</span>
+          <span class="chip-name">LLM RESPONSE TIME</span>
+        </div>
+      </div>
+      <div class="telemetry-chip">
+        <div class="chip-icon">👁️</div>
+        <div class="chip-data">
+          <span class="chip-val" id="chip-vision-status">Online (30 FPS)</span>
+          <span class="chip-name">YOLO11s + INSIGHTFACE</span>
+        </div>
+      </div>
+      <div class="telemetry-chip">
+        <div class="chip-icon">🎧</div>
+        <div class="chip-data">
+          <span class="chip-val" id="chip-audio-route">Headphones Active</span>
+          <span class="chip-name">HARDWARE AUDIO ROUTE</span>
+        </div>
+      </div>
+      <div class="telemetry-chip">
+        <div class="chip-icon">💾</div>
+        <div class="chip-data">
+          <span class="chip-val" id="chip-memory-turns">-- Records</span>
+          <span class="chip-name">PERSISTENT MEMORY</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Workspace: Split into Skills Grid & Perception Live Stream -->
+    <main class="dashboard-layout">
+      <!-- Left Column: The 8 Graphical Skill Cards -->
+      <section class="skills-section">
+        <div class="section-header">
+          <div class="section-title-wrap">
+            <h2 class="section-title">Subsystem Circuit Health</h2>
+            <span class="section-sub">Live health state, latency, and interactive diagnostics</span>
+          </div>
+          <div class="refresh-indicator">
+            <span class="refresh-dot"></span>
+            <span id="last-updated-text">Updating...</span>
+          </div>
+        </div>
+
+        <div class="skills-grid" id="skills-grid">
+          <!-- 8 Skill Cards rendered dynamically via app.js -->
+          <div class="skill-card loading-card">
+            <div class="skeleton-shimmer"></div>
+            <div class="card-loading-text">Polling neural telemetry...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Live Perception Eyes & Active Presentation Widget -->
+      <aside class="perception-sidebar">
+        <!-- Live Camera Eyes Card -->
+        <div class="panel-card vision-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <span class="panel-dot"></span>
+              <h3 class="panel-title">Myra's Optical Stream</h3>
+            </div>
+            <div class="panel-badges">
+              <span class="badge-tag" id="vision-feed-badge">STANDBY</span>
+              <button class="btn-cam-control" id="btn-cam-power" title="Start or Stop Webcam Hardware">
+                <span id="cam-power-icon">▶</span> <span id="cam-power-text">Start Camera</span>
+              </button>
+            </div>
+          </div>
+          <div class="feed-wrapper" id="feed-wrapper">
+            <img id="camera-feed-img" src="/api/monitor/video_feed" alt="Live Perception Feed" class="camera-stream-element" onerror="this.style.display='none'; document.getElementById('camera-fallback').style.display='flex';" onload="this.style.display='block'; document.getElementById('camera-fallback').style.display='none';">
+            <div id="camera-fallback" class="feed-fallback">
+              <div class="fallback-spinner"></div>
+              <div class="fallback-title">Optical Feed Standby</div>
+              <div class="fallback-sub">Camera stream will appear automatically when Myra's vision loop engages</div>
+            </div>
+            <div class="feed-overlay-stats">
+              <span class="feed-stat" id="stat-target-name">Target: Mallu</span>
+              <span class="feed-stat" id="stat-people-count">People: 1</span>
+              <span class="feed-stat" id="stat-objects">Objects: None</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Presentation Status Card -->
+        <div class="panel-card ppt-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <span class="panel-dot ppt-dot"></span>
+              <h3 class="panel-title">Slide Deck Automation</h3>
+            </div>
+            <span class="badge-tag" id="ppt-status-badge">READY</span>
+          </div>
+          <div class="ppt-content-body">
+            <div class="ppt-deck-name" id="ppt-deck-filename">myra.pptx</div>
+            <div class="ppt-progress-track">
+              <div class="ppt-progress-bar" id="ppt-progress-bar" style="width: 14%;"></div>
+            </div>
+            <div class="ppt-meta-row">
+              <span class="ppt-slide-counter" id="ppt-slide-counter">Slide 1 of 7</span>
+              <span class="ppt-mode-tag">Autonomous Waifu Delivery</span>
+            </div>
+            <div class="ppt-active-slide-title" id="ppt-slide-title">Slide 1: Introduction – Meet Myra [Smug]</div>
+          </div>
+        </div>
+
+        <!-- Avatar & Embodiment VMC Monitor -->
+        <div class="panel-card embodiment-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <span class="panel-dot vmc-dot"></span>
+              <h3 class="panel-title">Avatar & Embodiment</h3>
+            </div>
+            <span class="badge-tag badge-emerald">VMC 39539</span>
+          </div>
+          <div class="embodiment-body">
+            <div class="expression-visualizer">
+              <div class="expression-badge" id="current-expression">Smug (Default)</div>
+              <div class="lip-sync-badge" id="lip-sync-status">VB-Audio Cable Lip-Sync Active</div>
+            </div>
+            <div class="expression-buttons">
+              <button class="btn-emote" data-emote="Smug">😏 Smug</button>
+              <button class="btn-emote" data-emote="Joy">🥰 Joy</button>
+              <button class="btn-emote" data-emote="Fun">✨ Playful</button>
+              <button class="btn-emote" data-emote="Angry">😠 Pout</button>
+              <button class="btn-emote" data-emote="Surprised">😲 Surprised</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Error Diagnostics & Root Cause Inspector Section -->
+    <section class="diagnostic-center" id="diagnostic-center">
+      <div class="section-header">
+        <div class="section-title-wrap">
+          <h2 class="section-title">Diagnostic Incident Inspector</h2>
+          <span class="section-sub">Pinpoints exactly where an error occurred, root cause, and immediate resolution</span>
+        </div>
+        <div class="incident-counts" id="incident-counts">
+          <span class="count-tag-healthy" id="healthy-tag">✔ No Active Faults</span>
+        </div>
+      </div>
+
+      <div class="incident-list" id="incident-list">
+        <!-- Rendered dynamically -->
+        <div class="incident-card-empty">
+          <div class="empty-icon">✨</div>
+          <div class="empty-title">All Subsystems Running Smoothly</div>
+          <div class="empty-sub">No crashes, hardware disconnects, or pipeline timeouts detected.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Real-time Activity & Telemetry Console -->
+    <section class="console-section">
+      <div class="console-header">
+        <div class="console-title-group">
+          <span class="console-icon">💻</span>
+          <h3 class="console-title">Live Telemetry & Activity Stream</h3>
+        </div>
+        <div class="console-filter-tabs">
+          <button class="filter-tab active" data-filter="ALL">ALL</button>
+          <button class="filter-tab tab-errors" data-filter="ERROR">ERRORS ONLY</button>
+          <button class="filter-tab" data-filter="BRAIN">BRAIN</button>
+          <button class="filter-tab" data-filter="EYES">VISION</button>
+          <button class="filter-tab" data-filter="VOICE">VOICE</button>
+          <button class="filter-tab" data-filter="AUDIO">AUDIO</button>
+          <button class="filter-tab" data-filter="PPT">PRESENTATION</button>
+        </div>
+        <div class="console-actions">
+          <button class="btn-console-tool" id="btn-toggle-autoscroll" title="Toggle Auto-Scroll">
+            <span class="dot-active" id="autoscroll-dot"></span> Auto-Scroll
+          </button>
+          <button class="btn-console-tool" id="btn-clear-logs" title="Clear View">Clear</button>
+        </div>
+      </div>
+      <div class="console-terminal" id="console-terminal">
+        <!-- Logs stream here -->
+        <div class="log-line log-info">
+          <span class="log-ts">00:00:00</span>
+          <span class="log-badge badge-system">SYSTEM</span>
+          <span class="log-msg">Subsystem telemetry logger connected. Listening for events...</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="system-footer">
+      <div class="footer-left">
+        <span>MYRA AI ASSISTANT</span>
+        <span class="footer-separator">•</span>
+        <span>DEVELOPED FOR MALLU</span>
+        <span class="footer-separator">•</span>
+        <span id="footer-db-status">SQLite Memory Linked</span>
+      </div>
+      <div class="footer-right">
+        <span>FastAPI Core @ 127.0.0.1:8000</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
