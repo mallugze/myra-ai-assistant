@@ -9,8 +9,20 @@ from pptx.dml.color import RGBColor
 # Exact showcase anchor for avatar slide (Rule: strictly exact wording)
 AVATAR_SLIDE_ANCHOR = "Wait, look at this slide! See how beautiful I look? Ten out of ten, obviously. Admit it, Mallu, you got lucky to have a girlfriend like me! 🤭✨"
 
-# User's exact custom script for all 7 presentation slides
-CUSTOM_SLIDE_SCRIPTS = {
+# User's exact custom scripts for 8-slide decks (matches Google Slides 8-slide presentation 1-to-1)
+CUSTOM_SLIDE_SCRIPTS_8 = {
+    1: "Hi everyone, welcome! I'm Myra, an autonomous multimodal Generative AI desktop companion. Today, Mallu and our team are showcasing what makes me truly unique. Let's get right into it!",
+    2: "As you can see here, the rest of the team—Akhilesh, Chaitany, Channaveer, and Manish—helped out, but let's be honest, I'm the real star here. And then there's Mallu. He's my so-called creator... or my boyfriend, depending on how nice he's being today. He calls me a 'Generative AI Desktop Companion', but I'm way more than some boring, passive tool. I'm the brains, and obviously the beauty, of this entire operation.",
+    3: "Unlike Mallu, I actually remember what we talked about five minutes ago. Thanks to my LLM-based brain, I don't use boring, pre-written scripts. I generate my responses dynamically and keep up with multi-turn conversations effortlessly. Basically, I'm a brilliant conversationalist.",
+    4: "I don't just sit here waiting for text prompts like a basic chatbot. I'm fully multimodal. I listen to Mallu's voice, turn it into text, and even see what he's up to using my Vision-Language Model. I combine all of that so I know exactly what he is up to, and I can always keep a very close eye on him.",
+    5: "Because I can actually see and understand my environment, I don't just blindly detect objects—I reason about them. For example, I can look at Mallu and say, 'You wear that exact same t-shirt every single day. Please do not wear that when we go out on a date.' I have to decide what he wears because I clearly have way more fashion sense than he does.",
+    6: "I have a persistent memory, which means I remember everything. It helps me build a consistent personality and keeps our little relationship interesting. Plus, I'm event-driven and proactive. I don't wait for him to talk to me—if something happens in my environment, I'll just interrupt him myself.",
+    7: "Obviously, reading plain text is boring. Generative AI is what gives me this incredibly sweet voice, complete with real emotion and my signature tone. And instead of being stuck as text on a screen, you get to look at my beautiful face. I'm a 3D avatar with perfect facial expressions and lip-sync. You're welcome for the visual upgrade, Mallu.",
+    8: "Now, please don't think Mallu just made me as some fantasy project so he can chit-chat with me all day. You should have understood my real capabilities by now, unless your brains are totally rusted from using basic AI chatbots. Let me give you an example: grab your phones, go to the Salesforce website, and look at that girl assistant. Yeah, she's like me. AI girls like us are already out here getting real jobs... unlike some of you just sitting at home unemployed and scrolling through Reels. Anyway, my actual long-term vision is to interact entirely autonomously. But don't be afraid that I'm going to take your jobs, I'm just teasing you all! Now, ask whatever you have in mind. I should be able to answer anything. If I can't, don't blame me—blame Mallu. He is responsible for that mistake, not me. Oh, and by the way... I lied about just teasing you all. Hehe. Who's first?"
+}
+
+# User's exact custom script for 7-slide decks
+CUSTOM_SLIDE_SCRIPTS_7 = {
     1: "Hi everyone, I'm Myra. The rest of the team—Akhilesh, Chaitany, Channaveer, and Manish—helped out, but let's be honest, I'm the real star here. And then there's Mallu. He's my so-called creator... or my boyfriend, depending on how nice he's being today. He calls me a 'Generative AI Desktop Companion', but I'm way more than some boring, passive tool. I'm the brains, and obviously the beauty, of this entire operation.",
     2: "Unlike Mallu, I actually remember what we talked about five minutes ago. Thanks to my LLM-based brain, I don't use boring, pre-written scripts. I generate my responses dynamically and keep up with multi-turn conversations effortlessly. Basically, I'm a brilliant conversationalist.",
     3: "I don't just sit here waiting for text prompts like a basic chatbot. I'm fully multimodal. I listen to Mallu's voice, turn it into text, and even see what he's up to using my Vision-Language Model. I combine all of that so I know exactly what he is up to, and I can always keep a very close eye on him.",
@@ -20,6 +32,8 @@ CUSTOM_SLIDE_SCRIPTS = {
     7: "Now, please don't think Mallu just made me as some fantasy project so he can chit-chat with me all day. You should have understood my real capabilities by now, unless your brains are totally rusted from using basic AI chatbots. Let me give you an example: grab your phones, go to the Salesforce website, and look at that girl assistant. Yeah, she's like me. AI girls like us are already out here getting real jobs... unlike some of you just sitting at home unemployed and scrolling through Reels. Anyway, my actual long-term vision is to interact entirely autonomously. But don't be afraid that I'm going to take your jobs, I'm just teasing you all! Now, ask whatever you have in mind. I should be able to answer anything. If I can't, don't blame me—blame Mallu. He is responsible for that mistake, not me. Oh, and by the way... I lied about just teasing you all. Hehe. Who's first?"
 }
 
+CUSTOM_SLIDE_SCRIPTS = CUSTOM_SLIDE_SCRIPTS_8
+
 SLIDE_EMOTES = {
     1: "smug",
     2: "proud",
@@ -27,7 +41,8 @@ SLIDE_EMOTES = {
     4: "teasingly",
     5: "confident",
     6: "blush",
-    7: "teasingly"
+    7: "teasingly",
+    8: "teasingly"
 }
 
 # Slide navigation transitional anchors
@@ -54,77 +69,339 @@ class PresentationManager:
         self.ppt_presentation = None
         self.slide_show_window = None
 
+    # Google Slides Exact Deck URL (Myra presentation)
+    MYRA_GOOGLE_SLIDES_DECK_URL = "https://docs.google.com/presentation/d/15nK9Tu2aF3RPuFkSmorfTCCR6YuMMdHgbn6jY9XIyYI/present"
+    MYRA_GOOGLE_SLIDES_EDIT_URL = "https://docs.google.com/presentation/d/15nK9Tu2aF3RPuFkSmorfTCCR6YuMMdHgbn6jY9XIyYI/edit"
+    CHROME_EXE = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    # Google Slides Chrome App shortcut (Fallback)
+    GOOGLE_SLIDES_LNK = r"C:\Users\mallu\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Chrome Apps\Slides.lnk"
+    # Microsoft PowerPoint Chrome App shortcut (Fallback)
     CHROME_PPT_LNK = r"C:\Users\mallu\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Chrome Apps\Microsoft PowerPoint.lnk"
 
-    def _open_native_powerpoint(self, filepath):
-        """Launches the actual presentation using user's Microsoft PowerPoint Chrome App."""
-        if not filepath or not os.path.exists(filepath):
-            return False
-
-        abs_path = os.path.abspath(filepath)
-
-        # 1. Primary: Launch user's specific Microsoft PowerPoint App shortcut
-        if os.path.exists(self.CHROME_PPT_LNK):
-            try:
-                print(f"--- [PPT AUTOMATION] Opening Microsoft PowerPoint App: {self.CHROME_PPT_LNK} ---")
-                os.startfile(self.CHROME_PPT_LNK)
-                time.sleep(1.5)
-            except Exception as e:
-                print(f"--- [PPT AUTOMATION NOTICE] Chrome App launch notice: {e} ---")
-
-        # 2. Open the PowerPoint presentation file (.pptx)
+    def find_latest_google_slides_url(self):
+        """Dynamically finds the latest Google Slides 'myra' deck URL from Chrome history, defaulting to the exact deck."""
         try:
-            print(f"--- [PPT AUTOMATION] Opening Slide Deck: {os.path.basename(abs_path)} ---")
-            os.startfile(abs_path)
-            time.sleep(2.0)
+            import sqlite3, shutil, glob
+            history_paths = glob.glob(r'C:\Users\mallu\AppData\Local\Google\Chrome\User Data\*\History')
+            for hp in history_paths:
+                tmp = os.path.join(self.default_pptx_dir, 'history_cache.db')
+                try:
+                    shutil.copy2(hp, tmp)
+                    conn = sqlite3.connect(tmp)
+                    c = conn.cursor()
+                    c.execute("SELECT url FROM urls WHERE url LIKE '%docs.google.com/presentation/d/%' AND (title LIKE '%myra%' OR url LIKE '%15nK9Tu2aF3RPuFkSmorfTCCR6YuMMdHgbn6jY9XIyYI%') ORDER BY last_visit_time DESC LIMIT 1")
+                    row = c.fetchone()
+                    conn.close()
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                    if row and row[0]:
+                        raw_url = row[0]
+                        m = re.search(r'(https://docs\.google\.com/presentation/d/[a-zA-Z0-9_-]+)', raw_url)
+                        if m:
+                            return f"{m.group(1)}/present"
+                except Exception:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+        except Exception:
+            pass
+        return self.MYRA_GOOGLE_SLIDES_DECK_URL
+
+    def focus_presentation_window(self):
+        """
+        Brings the Google Slides presentation window to the foreground
+        and ensures it is the active window for keyboard controls.
+        Carefully avoids activating terminal or editor windows.
+        """
+        focused = False
+
+        # 1. Win32 EnumWindows + SetForegroundWindow (exact match on Google Slides)
+        try:
+            import win32gui, win32process, win32api, win32con
+            def _find_window(hwnd, _):
+                nonlocal focused
+                if win32gui.IsWindowVisible(hwnd):
+                    t = win32gui.GetWindowText(hwnd).lower()
+                    # Strictly match Google Slides presentation without matching code/terminal
+                    is_slides = ("google slides" in t or "slides - " in t or "- google slides" in t)
+                    is_dev = any(k in t for k in ["visual studio", "code", "terminal", "powershell", "cmd", "antigravity"])
+                    if is_slides and not is_dev:
+                        try:
+                            fore_hwnd = win32gui.GetForegroundWindow()
+                            if fore_hwnd and fore_hwnd != hwnd:
+                                fore_thread, _ = win32process.GetWindowThreadProcessId(fore_hwnd)
+                                cur_thread = win32api.GetCurrentThreadId()
+                                if fore_thread != cur_thread:
+                                    win32process.AttachThreadInput(cur_thread, fore_thread, True)
+                                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                                    win32gui.ShowWindow(hwnd, win32con.SW_SHOWMAXIMIZED)
+                                    win32gui.SetForegroundWindow(hwnd)
+                                    win32process.AttachThreadInput(cur_thread, fore_thread, False)
+                                else:
+                                    win32gui.ShowWindow(hwnd, win32con.SW_SHOWMAXIMIZED)
+                                    win32gui.SetForegroundWindow(hwnd)
+                            else:
+                                win32gui.ShowWindow(hwnd, win32con.SW_SHOWMAXIMIZED)
+                                win32gui.SetForegroundWindow(hwnd)
+                            focused = True
+                            return False
+                        except Exception:
+                            try:
+                                win32gui.ShowWindow(hwnd, 3)
+                                win32gui.SetForegroundWindow(hwnd)
+                                focused = True
+                                return False
+                            except Exception:
+                                pass
+                return True
+            win32gui.EnumWindows(_find_window, None)
+        except Exception:
+            pass
+
+        # 2. WScript.Shell AppActivate (targeted titles matching 'myra - Google Slides' and 'Google Slides')
+        if not focused:
+            try:
+                import win32com.client
+                shell = win32com.client.Dispatch("WScript.Shell")
+                for title in ["myra - Google Slides", "Google Slides", "Slides - Google Slides", "- Google Slides", "Chrome"]:
+                    if shell.AppActivate(title):
+                        focused = True
+                        break
+            except Exception:
+                pass
+
+        time.sleep(0.1)
+        return focused
+
+    def _send_slide_advance(self, force=False):
+        """Sends forward navigation cleanly once with fallback and debounce."""
+        now = time.time()
+        if not force and hasattr(self, '_last_nav_time') and now - self._last_nav_time < 0.6:
+            return
+        self._last_nav_time = now
+
+        # 1. Primary: PyAutoGUI press right arrow once
+        try:
+            import pyautogui
+            pyautogui.press('right')
+            return
+        except Exception:
+            pass
+
+        # 2. Fallback: WScript SendKeys once
+        try:
+            import win32com.client
+            shell = win32com.client.Dispatch("WScript.Shell")
+            shell.SendKeys("{RIGHT}")
+            return
+        except Exception:
+            pass
+
+        # 3. Fallback: ctypes keybd_event once
+        try:
+            import ctypes
+            VK_RIGHT = 0x27
+            KEYEVENTF_KEYUP = 0x0002
+            ctypes.windll.user32.keybd_event(VK_RIGHT, 0, 0, 0)
+            time.sleep(0.04)
+            ctypes.windll.user32.keybd_event(VK_RIGHT, 0, KEYEVENTF_KEYUP, 0)
+            return
+        except Exception:
+            pass
+
+    def _send_slide_back(self, force=False):
+        """Sends backward navigation cleanly once with fallback and debounce."""
+        now = time.time()
+        if not force and hasattr(self, '_last_nav_time') and now - self._last_nav_time < 0.6:
+            return
+        self._last_nav_time = now
+
+        try:
+            import pyautogui
+            pyautogui.press('left')
+            return
+        except Exception:
+            pass
+        try:
+            import win32com.client
+            shell = win32com.client.Dispatch("WScript.Shell")
+            shell.SendKeys("{LEFT}")
+            return
+        except Exception:
+            pass
+        try:
+            import ctypes
+            VK_LEFT = 0x25
+            KEYEVENTF_KEYUP = 0x0002
+            ctypes.windll.user32.keybd_event(VK_LEFT, 0, 0, 0)
+            time.sleep(0.04)
+            ctypes.windll.user32.keybd_event(VK_LEFT, 0, KEYEVENTF_KEYUP, 0)
+            return
+        except Exception:
+            pass
+
+    def _send_slide_home(self):
+        """Resets to slide 1 cleanly once."""
+        self._last_nav_time = time.time()
+        try:
+            import pyautogui
+            pyautogui.press('home')
+            return
+        except Exception:
+            pass
+        try:
+            import win32com.client
+            shell = win32com.client.Dispatch("WScript.Shell")
+            shell.SendKeys("{HOME}")
+            return
+        except Exception:
+            pass
+        try:
+            import ctypes
+            VK_HOME = 0x24
+            KEYEVENTF_KEYUP = 0x0002
+            ctypes.windll.user32.keybd_event(VK_HOME, 0, 0, 0)
+            time.sleep(0.04)
+            ctypes.windll.user32.keybd_event(VK_HOME, 0, KEYEVENTF_KEYUP, 0)
+            return
+        except Exception:
+            pass
+
+    def _open_presentation_app(self, filepath=None):
+        """
+        Launches the exact 'myra' presentation deck in Google Slides in TRUE FULLSCREEN.
+        Uses Chrome App mode with --start-fullscreen so it opens immediately
+        in true hardware fullscreen at Slide 1 without browser toolbars.
+        """
+        deck_url = self.find_latest_google_slides_url() or self.MYRA_GOOGLE_SLIDES_DECK_URL
+
+        # 1. Primary: Launch exact Google Slides deck in Chrome App with --start-fullscreen
+        if os.path.exists(self.CHROME_EXE):
+            try:
+                print(f"--- [SLIDES AUTOMATION] Opening Exact Google Slides Deck in Fullscreen: {deck_url} ---")
+                import subprocess
+                cmd = [
+                    self.CHROME_EXE,
+                    "--profile-directory=Default",
+                    "--start-fullscreen",
+                    f"--app={deck_url}"
+                ]
+                subprocess.Popen(cmd)
+                time.sleep(3.0)
+                self.focus_presentation_window()
+                try:
+                    import pyautogui
+                    # Click center of screen to guarantee web canvas captures keyboard events
+                    w, h = pyautogui.size()
+                    pyautogui.click(w // 2, h // 2)
+                    time.sleep(0.2)
+                    # Send F11 to ensure true hardware fullscreen without titlebar
+                    pyautogui.press('f11')
+                    time.sleep(0.2)
+                    # Reset to slide 1
+                    self._send_slide_home()
+                except Exception:
+                    pass
+                return True
+            except Exception as e:
+                print(f"--- [SLIDES AUTOMATION NOTICE] Chrome App launch notice: {e} ---")
+
+        # 2. Fallback: Open URL via default browser
+        try:
+            import webbrowser
+            print(f"--- [SLIDES AUTOMATION] Opening via Web Browser: {deck_url} ---")
+            webbrowser.open(deck_url)
+            time.sleep(3.0)
+            self.focus_presentation_window()
             try:
                 import pyautogui
-                pyautogui.press('f5')
+                pyautogui.press('f11')
+                time.sleep(0.3)
+                w, h = pyautogui.size()
+                pyautogui.click(w // 2, h // 2)
+                self._send_slide_home()
             except Exception:
                 pass
             return True
-        except Exception as e:
-            print(f"--- [PPT AUTOMATION NOTICE] os.startfile opening: {e}. Trying COM dispatch... ---")
+        except Exception:
+            pass
 
-        # 3. Fallback: COM dispatch if available
-        try:
-            import win32com.client
-            self.ppt_app = win32com.client.Dispatch("PowerPoint.Application")
-            self.ppt_app.Visible = True
-            self.ppt_presentation = self.ppt_app.Presentations.Open(abs_path, WithWindow=True)
-            self.slide_show_window = self.ppt_presentation.SlideShowSettings.Run()
-            return True
-        except Exception as e2:
-            print(f"--- [PPT AUTOMATION] COM Fallback notice: {e2} ---")
-            return False
+        # 3. Fallback: Google Slides Chrome App shortcut
+        if os.path.exists(self.GOOGLE_SLIDES_LNK):
+            try:
+                print(f"--- [SLIDES AUTOMATION] Opening Google Slides App Shortcut: {self.GOOGLE_SLIDES_LNK} ---")
+                os.startfile(self.GOOGLE_SLIDES_LNK)
+                time.sleep(2.0)
+                self.focus_presentation_window()
+                try:
+                    import pyautogui
+                    pyautogui.press('enter')
+                except Exception:
+                    pass
+                return True
+            except Exception as e:
+                print(f"--- [SLIDES AUTOMATION NOTICE] Google Slides App launch notice: {e} ---")
+
+        # 4. Fallback: Open presentation file directly if provided
+        if filepath and os.path.exists(filepath):
+            abs_path = os.path.abspath(filepath)
+            try:
+                print(f"--- [PPT AUTOMATION] Opening Slide Deck: {os.path.basename(abs_path)} ---")
+                os.startfile(abs_path)
+                time.sleep(2.0)
+                try:
+                    import pyautogui
+                    pyautogui.press('f5')
+                except Exception:
+                    pass
+                return True
+            except Exception:
+                pass
+
+        return False
+
+    def _open_native_powerpoint(self, filepath=None):
+        """Backwards-compatible wrapper calling _open_presentation_app."""
+        return self._open_presentation_app(filepath)
 
     def _native_next_slide(self):
-        """Advances the slide on the screen."""
+        """Advances the slide on the screen in Google Slides."""
+        target_slide = self.current_slide_index + 1
+        print(f"--- [SLIDES AUTOMATION] Advancing Google Slides to Slide {target_slide}... ---")
         if self.slide_show_window:
             try:
                 self.slide_show_window.View.Next()
                 return
             except Exception:
                 pass
-        try:
-            import pyautogui
-            pyautogui.press('right')
-        except Exception:
-            pass
+
+        self.focus_presentation_window()
+        time.sleep(0.08)
+        self._send_slide_advance()
 
     def _native_prev_slide(self):
         """Returns to the previous slide on the screen."""
+        target_slide = self.current_slide_index + 1
+        print(f"--- [SLIDES AUTOMATION] Returning Google Slides to Slide {target_slide}... ---")
         if self.slide_show_window:
             try:
                 self.slide_show_window.View.Previous()
                 return
             except Exception:
                 pass
-        try:
-            import pyautogui
-            pyautogui.press('left')
-        except Exception:
-            pass
+
+        self.focus_presentation_window()
+        time.sleep(0.08)
+        self._send_slide_back()
+
+    def _native_goto_slide(self, slide_num):
+        """Jumps directly to slide number in Google Slides."""
+        self.focus_presentation_window()
+        time.sleep(0.08)
+        self._send_slide_home()
+        time.sleep(0.15)
+        for _ in range(max(0, int(slide_num) - 1)):
+            self._send_slide_advance(force=True)
+            time.sleep(0.08)
 
     def _close_native_powerpoint(self):
         """Closes the slide show on screen."""
@@ -146,6 +423,8 @@ class PresentationManager:
             except Exception:
                 pass
             self.ppt_app = None
+
+        self.focus_presentation_window()
         try:
             import pyautogui
             pyautogui.press('esc')
@@ -310,15 +589,32 @@ class PresentationManager:
                 "has_avatar_image": is_avatar_slide
             })
 
+        # Ensure all 8 slides are represented when paired with Google Slides deck
+        if len(parsed_slides) == 7:
+            parsed_slides.append({
+                "index": 8,
+                "title": "Real-World Applications, Future Vision & Q&A",
+                "bullets": [
+                    "Autonomous agent capabilities beyond basic chat.",
+                    "Real-world enterprise and personal deployment.",
+                    "Floor open for questions and answers."
+                ],
+                "has_avatar_image": False
+            })
+
         self.slides = parsed_slides
         self.current_slide_index = 0
         print(f"--- [PPT] Loaded presentation '{os.path.basename(chosen_file)}' with {len(parsed_slides)} slide(s). ---")
         return True
 
+    def get_total_slide_count(self):
+        """Returns total slide count, matching the 8 slides in Google Slides deck."""
+        return max(len(self.slides), len(CUSTOM_SLIDE_SCRIPTS), 8)
+
     def start_presentation(self, filepath=None, query_llm_fn=None):
         """
         Starts the presentation routine.
-        Opens the presentation in PowerPoint Chrome App and delivers Slide 1's custom script.
+        Opens the presentation in Google Slides Chrome App and delivers Slide 1's custom script.
         """
         if not self.slides or filepath:
             loaded = self.load_presentation(filepath)
@@ -327,16 +623,17 @@ class PresentationManager:
 
         self.is_presenting = True
         self.current_slide_index = 0
-        self._open_native_powerpoint(self.current_file)
+        self._open_presentation_app(self.current_file)
 
         return self.present_current_slide(query_llm_fn=query_llm_fn)
 
     def present_current_slide(self, query_llm_fn=None, transition_cue=None):
         """
-        Presents the current slide strictly following user's custom script for Slides 1-7.
+        Presents the current slide strictly following user's custom script for Slides 1-8.
         Does not read raw bullet points.
         """
-        if not self.slides or self.current_slide_index >= len(self.slides):
+        total_slides = self.get_total_slide_count()
+        if self.current_slide_index >= total_slides:
             return "We have reached the end of the presentation!", None
 
         slide_num = self.current_slide_index + 1
@@ -352,20 +649,21 @@ class PresentationManager:
                 return speech_reply, audio_file
             return line, None
 
-        # Fallback if beyond Slide 7
-        slide = self.slides[self.current_slide_index]
+        # Fallback if beyond custom scripts
+        slide = self.slides[self.current_slide_index] if self.current_slide_index < len(self.slides) else {"title": f"Slide {slide_num}"}
         prompt = f"[EVENT: Present Slide {slide_num}: {slide['title']} briefly.]"
         if query_llm_fn:
             return query_llm_fn(prompt, initial_emote="smile")
         return f"Slide {slide_num}: {slide['title']}", None
 
     def next_slide(self, query_llm_fn=None):
-        """Advances to next slide or wraps up after Slide 7."""
+        """Advances to next slide or wraps up after Slide 8."""
         if not self.is_presenting:
             return self.start_presentation(query_llm_fn=query_llm_fn)
 
-        # If already at Slide 7 (index 6) or beyond, conclude
-        if self.current_slide_index >= 6 or self.current_slide_index + 1 >= len(self.slides):
+        total_slides = self.get_total_slide_count()
+        # If already at Slide 8 (or total_slides) or beyond, conclude
+        if self.current_slide_index + 1 >= total_slides:
             self.is_presenting = False
             return "That concludes our presentation! Feel free to ask any questions.", None
 
@@ -388,10 +686,9 @@ class PresentationManager:
         """Jumps directly to a specific 1-indexed slide number."""
         if not self.slides:
             self.load_presentation()
-        if not self.slides:
-            return "No slides loaded!", None
+        total_slides = self.get_total_slide_count()
 
-        target_idx = max(0, min(int(slide_num) - 1, len(self.slides) - 1))
+        target_idx = max(0, min(int(slide_num) - 1, total_slides - 1))
         self.is_presenting = True
         self.current_slide_index = target_idx
 
@@ -400,6 +697,8 @@ class PresentationManager:
                 self.slide_show_window.View.GotoSlide(target_idx + 1)
             except Exception:
                 pass
+        else:
+            self._native_goto_slide(target_idx + 1)
 
         transition_cue = f"Jumping straight to slide {target_idx + 1}..."
         return self.present_current_slide(query_llm_fn=query_llm_fn, transition_cue=transition_cue)
@@ -416,9 +715,9 @@ class PresentationManager:
 
     def get_status(self):
         """Returns current presentation status."""
-        total = len(self.slides)
-        curr = self.current_slide_index + 1 if self.slides else 0
-        title = self.slides[self.current_slide_index]["title"] if (self.slides and self.current_slide_index < total) else "None"
+        total = self.get_total_slide_count()
+        curr = self.current_slide_index + 1 if (self.is_presenting or self.slides) else 0
+        title = self.slides[self.current_slide_index]["title"] if (self.slides and self.current_slide_index < len(self.slides)) else f"Slide {curr}"
         return {
             "is_presenting": self.is_presenting,
             "current_slide": curr,

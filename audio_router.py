@@ -130,7 +130,7 @@ def detect_audio_devices(verbose: bool = True) -> dict:
         'output_device': best_out_idx,
         'output_name': best_out_name,
         'is_headphones': is_headphones,
-        'vb_cable_device': vb_cable_idx
+        'vb_cable_device': None if is_headphones else vb_cable_idx
     }
 
     if verbose:
@@ -138,10 +138,12 @@ def detect_audio_devices(verbose: bool = True) -> dict:
         print("|           [AUDIO] MYRA HARDWARE AUDIO ROUTER READY               |")
         print("+==================================================================+")
         in_tag = "  [HEADSET MIC ACTIVE]" if is_headphone_mic else "  [LAPTOP BUILT-IN MIC]"
-        out_tag = "  [HEADPHONES ACTIVE]" if is_headphones else "  [LAPTOP SPEAKERS ACTIVE]"
+        out_tag = "  [HEADPHONES ONLY]" if is_headphones else "  [LAPTOP SPEAKERS ACTIVE]"
         print(f"  INPUT MIC  : [{best_in_idx}] {best_in_name}{in_tag}")
         print(f"  OUTPUT     : [{best_out_idx}] {best_out_name}{out_tag}")
-        if vb_cable_idx is not None:
+        if is_headphones:
+            print("  POLICY     : Headphones connected -> Muting laptop speakers completely.")
+        elif vb_cable_idx is not None:
             print(f"  VSEEFACE   : [{vb_cable_idx}] {devs[vb_cable_idx]['name']}  [LIP-SYNC ACTIVE]")
         print("+==================================================================+\n")
 
@@ -149,18 +151,27 @@ def detect_audio_devices(verbose: bool = True) -> dict:
 
 def play_audio_dual(file_path: str, audio_config: dict = None):
     """
-    Plays audio to the prioritized output device (Headphones/Speakers),
-    and simultaneously routes audio to VB-Audio Cable for VSeeFace lip-sync if available.
+    Plays audio to the prioritized output device following the strict user policy:
+    1. First check if headphones are connected.
+    2. If YES (headphones connected): Speak in HEADPHONES ONLY.
+       (Never route audio to laptop speakers or secondary virtual streams that bleed into laptop speakers).
+    3. If NO (headphones not connected): Speak using LAPTOP SPEAKERS.
     Uses dedicated stream handles and hardware buffer drainage so words are never cut off.
     """
     if not file_path or not os.path.exists(file_path):
         return
 
-    if audio_config is None:
-        audio_config = detect_audio_devices(verbose=False)
+    # Always check the latest hardware connection state in real time (<0.5ms)
+    audio_config = detect_audio_devices(verbose=False)
 
     out_dev = audio_config.get('output_device')
-    vb_dev = audio_config.get('vb_cable_device')
+    out_name = audio_config.get('output_name', 'Default Device')
+    is_hp = audio_config.get('is_headphones', False)
+
+    if is_hp:
+        print(f"🎧 [AUDIO] Headphones Connected: Outputting speech exclusively to '{out_name}'.")
+    else:
+        print(f"🔊 [AUDIO] Headphones Not Detected: Outputting speech to Laptop Speakers '{out_name}'.")
 
     try:
         data, fs = sf.read(file_path, dtype='float32')
@@ -173,50 +184,22 @@ def play_audio_dual(file_path: str, audio_config: dict = None):
             tail_silence = np.zeros((int(fs * 0.40), data.shape[1]), dtype=np.float32)
             data = np.concatenate([data, tail_silence], axis=0)
 
-        streams = []
+        # Single dedicated stream: Headphones only if connected, otherwise Laptop Speakers
         try:
             s_out = sd.OutputStream(device=out_dev, channels=1 if data.ndim == 1 else data.shape[1], samplerate=fs)
             s_out.start()
-            streams.append(s_out)
-        except Exception:
-            s_out = None
-
-        if vb_dev is not None and vb_dev != out_dev:
-            try:
-                s_vb = sd.OutputStream(device=vb_dev, channels=1 if data.ndim == 1 else data.shape[1], samplerate=fs)
-                s_vb.start()
-                streams.append(s_vb)
-            except Exception:
-                s_vb = None
-
-        if streams:
             block_size = 2048
             for i in range(0, len(data), block_size):
                 chunk = data[i:i + block_size]
-                for s in streams:
-                    try:
-                        s.write(chunk)
-                    except Exception:
-                        pass
-
-            for s in streams:
-                try:
-                    s.stop()
-                    s.close()
-                except Exception:
-                    pass
-
-            # Safety sleep for physical Bluetooth headphone speaker driver flush
+                s_out.write(chunk)
+            s_out.stop()
+            s_out.close()
+            # Safety sleep for physical Bluetooth headphone / speaker driver flush
             time.sleep(0.25)
-        else:
+        except Exception as se:
             sd.play(data, fs, device=out_dev)
             sd.wait()
             time.sleep(0.25)
 
     except Exception as e:
-        print(f"--- [AUDIO ROUTER] Playback fallback: {e} ---")
-        try:
-            import winsound
-            winsound.PlaySound(file_path, winsound.SND_FILENAME)
-        except Exception:
-            pass
+        print(f"--- [AUDIO ROUTER] Playback notice: {e} ---")

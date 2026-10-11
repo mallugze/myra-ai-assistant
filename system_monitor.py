@@ -339,7 +339,7 @@ class SystemMonitor:
         }
 
     def check_presentation(self, presentation_manager=None) -> dict:
-        """Inspects PowerPoint presentation engine and slide deck."""
+        """Inspects Google Slides / PPT presentation engine and slide deck."""
         status = "ONLINE"
         error_msg = None
         fix_tip = None
@@ -365,11 +365,11 @@ class SystemMonitor:
                 slide_title = st.get("slide_title", "")
             except Exception as e:
                 status = "WARNING"
-                error_msg = f"Could not get PPT status: {e}"
+                error_msg = f"Could not get presentation status: {e}"
 
         return {
-            "name": "Presentation Engine",
-            "code": "PPT-07",
+            "name": "Presentation Engine (Google Slides)",
+            "code": "SLIDES-07",
             "status": "PRESENTING" if is_presenting else status,
             "deck_file": ppt_file,
             "deck_exists": file_exists,
@@ -377,10 +377,10 @@ class SystemMonitor:
             "current_slide": current_slide,
             "total_slides": total_slides,
             "current_slide_title": slide_title,
-            "custom_script_mode": "Autonomous 7-Slide College Script (Active)",
+            "custom_script_mode": "Autonomous 7-Slide College Script (Google Slides App)",
             "error": error_msg,
             "fix_tip": fix_tip,
-            "details": f"Presentation {'IN PROGRESS (Slide ' + str(current_slide) + '/' + str(total_slides) + ')' if is_presenting else 'Ready (' + str(total_slides) + ' slides in ' + ppt_file + ')'}."
+            "details": f"Google Slides Presentation {'IN PROGRESS (Slide ' + str(current_slide) + '/' + str(total_slides) + ')' if is_presenting else 'Ready (' + str(total_slides) + ' slides synced)'}."
         }
 
     def check_audio_router(self) -> dict:

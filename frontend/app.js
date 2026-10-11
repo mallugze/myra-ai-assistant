@@ -67,6 +67,7 @@ const SUBSYSTEM_ICONS = {
   'MEM-05': '💾',
   'AVTR-06': '🎭',
   'PPT-07': '📑',
+  'SLIDES-07': '📑',
   'ROUT-08': '🎧'
 };
 
@@ -177,7 +178,7 @@ function renderDashboard(data) {
   renderIncidentInspector(errors);
 
   // 7. Update Presentation Panel
-  const pptSub = subsystems.find(s => s.code === 'PPT-07');
+  const pptSub = subsystems.find(s => s.code === 'PPT-07' || s.code === 'SLIDES-07');
   if (pptSub) {
     pptDeckFilename.textContent = pptSub.deck_file || 'myra.pptx';
     const cur = pptSub.current_slide || 1;
@@ -250,9 +251,9 @@ function renderSkillCards(subsystems) {
         <div class="metric-item"><span class="m-key">Lip-Sync</span><span class="m-val">VB-Audio Cable</span></div>
         <div class="metric-item"><span class="m-key">Expressions</span><span class="m-val">6 Blendshapes</span></div>
       `;
-    } else if (sub.code === 'PPT-07') {
+    } else if (sub.code === 'PPT-07' || sub.code === 'SLIDES-07') {
       metricsHtml = `
-        <div class="metric-item"><span class="m-key">Deck</span><span class="m-val">${sub.deck_file || 'myra.pptx'}</span></div>
+        <div class="metric-item"><span class="m-key">Engine</span><span class="m-val">Google Slides</span></div>
         <div class="metric-item"><span class="m-key">Slide</span><span class="m-val">${sub.current_slide || 1} / ${sub.total_slides || 7}</span></div>
         <div class="metric-item"><span class="m-key">Automation</span><span class="m-val">Auto-Advance</span></div>
         <div class="metric-item"><span class="m-key">Mode</span><span class="m-val">7-Slide Script</span></div>

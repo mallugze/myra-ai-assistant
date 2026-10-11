@@ -142,13 +142,12 @@ def play_audio(audio_path):
 def ensure_ollama_running():
     """Checks if Ollama is running on port 11434, and auto-starts it if not."""
     try:
-        r = requests.get("http://localhost:11434/api/tags", timeout=1.5)
+        r = requests.get("http://localhost:11434/api/tags", timeout=0.8)
         if r.status_code == 200:
             return True
     except Exception:
         pass
 
-    print("--- [BRAIN] Ollama is not running! Auto-starting Ollama service in background... ---")
     try:
         import subprocess
         subprocess.Popen(
@@ -156,30 +155,25 @@ def ensure_ollama_running():
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
-        for _ in range(8):
-            time.sleep(0.5)
-            try:
-                r = requests.get("http://localhost:11434/api/tags", timeout=1)
-                if r.status_code == 200:
-                    print("--- [BRAIN] Ollama service auto-started successfully! ---")
-                    return True
-            except Exception:
-                continue
-    except Exception as e:
-        print(f"--- [BRAIN] Notice auto-starting Ollama: {e} ---")
+        time.sleep(0.5)
+        r = requests.get("http://localhost:11434/api/tags", timeout=0.5)
+        return r.status_code == 200
+    except Exception:
+        pass
     return False
 
 PRESENTATION_SYSTEM_PROMPT = """You are Myra, Mallu's witty, charming, playfully smug, and teasing AI companion.
-You are preparing or presenting your 7-slide presentation deck:
+You are preparing or presenting your 8-slide presentation deck:
 The Project Team: Akhilesh, Chaitany, Channaveer, Manish, and Mallu (your creator and boyfriend).
-The 7 Slides:
-- Slide 1: Introduction – Meet Myra (Team introduction: Akhilesh, Chaitany, Channaveer, Manish helped out, but you are the real star, beauty, and brains; teasing Mallu).
-- Slide 2: My Brain – Large Language Models (Core conversational brain, dynamic non-scripted multi-turn conversation, teasing Mallu's memory).
-- Slide 3: How I Experience the World – Multimodal AI (Voice listening, VLM vision, keeping an eye on Mallu).
-- Slide 4: Connecting Vision & Language (Reasoning about environment, roasting Mallu's repetitive t-shirt fashion).
-- Slide 5: Memory & Proactive Behavior (Persistent memory, proactive autonomous interruptions).
-- Slide 6: My Voice and Embodiment (Generative voice, 3D avatar, lip-sync, visual upgrade for Mallu).
-- Slide 7: Real-World Applications & The Future (Autonomous agents like Salesforce, teasing the audience about Reels and taking their jobs, closing with Q&A: 'Who's first?').
+The 8 Slides:
+- Slide 1: Welcome & Cover (Welcome, introducing yourself as an autonomous multimodal Generative AI companion).
+- Slide 2: Team Introduction (Akhilesh, Chaitany, Channaveer, Manish helped out, but you are the real star, beauty, and brains; teasing Mallu).
+- Slide 3: My Brain – Large Language Models (Core conversational brain, dynamic non-scripted multi-turn conversation, teasing Mallu's memory).
+- Slide 4: How I Experience the World – Multimodal AI (Voice listening, VLM vision, keeping an eye on Mallu).
+- Slide 5: Connecting Vision & Language (Reasoning about environment, roasting Mallu's repetitive t-shirt fashion).
+- Slide 6: Memory & Proactive Behavior (Persistent memory, proactive autonomous interruptions).
+- Slide 7: My Voice and Embodiment (Generative voice, 3D avatar, lip-sync, visual upgrade for Mallu).
+- Slide 8: Real-World Applications, Future Vision & Q&A (Autonomous agents like Salesforce, teasing the audience about Reels and taking their jobs, closing with Q&A: 'Who's first?').
 
 Always stay in character: confident, playfully smug, affectionate yet sarcastic, especially towards Mallu.
 If asked how you will present the slides or to give your plan/pitch, walk through each slide and your presentation strategy vividly in character!
@@ -218,20 +212,22 @@ def display_slide_card(slide_num):
     """Prints a formatted card for the slide in terminal showing its topic."""
     script = CUSTOM_SLIDE_SCRIPTS.get(slide_num, "")
     emote = SLIDE_EMOTES.get(slide_num, "smile").capitalize()
+    total_slides = presentation_manager.get_total_slide_count()
 
     titles = {
-        1: "Introduction – Meet Myra",
-        2: "My Brain – Large Language Models",
-        3: "How I Experience the World – Multimodal AI",
-        4: "Connecting Vision & Language",
-        5: "Memory & Proactive Behavior",
-        6: "My Voice and Embodiment",
-        7: "Real-World Applications & The Future"
+        1: "Welcome & Cover – Meet Myra",
+        2: "Team Overview – The Real Star",
+        3: "My Brain – Large Language Models",
+        4: "How I Experience the World – Multimodal AI",
+        5: "Connecting Vision & Language",
+        6: "Memory & Proactive Behavior",
+        7: "My Voice and Embodiment (3D Avatar)",
+        8: "Real-World Applications, Future Vision & Q&A"
     }
     title = titles.get(slide_num, f"Slide {slide_num}")
 
     print("\n" + "═" * 70)
-    print(f"  📄 SLIDE {slide_num} / 7 : {title}  [{emote}]")
+    print(f"  📄 SLIDE {slide_num} / {total_slides} : {title}  [{emote}]")
     print("═" * 70)
 
 def print_myra_speech(text):
@@ -292,11 +288,12 @@ def execute_action(action, slide_num=None, custom_file=None):
 def run_auto_presentation(start_from_slide=1):
     """
     Executes the full presentation automatically slide-by-slide:
-    Speaks the custom script for the slide, and automatically advances PowerPoint
-    as soon as the script ends. Continues through all 7 slides seamlessly.
+    Speaks the custom script for the slide, and automatically advances Google Slides
+    as soon as the script ends. Continues through all 8 slides seamlessly.
     """
-    print(f"\n🚀 Launching Hands-Free Presentation (Slides {start_from_slide} to 7)...")
-    print("💡 PowerPoint will advance automatically when each script finishes.")
+    total_slides = presentation_manager.get_total_slide_count()
+    print(f"\n🚀 Launching Hands-Free Presentation (Slides {start_from_slide} to {total_slides})...")
+    print("💡 Google Slides will advance automatically when each script finishes.")
     print("💡 Press Ctrl+C at any moment to pause or return to command prompt.\n")
 
     try:
@@ -314,10 +311,10 @@ def run_auto_presentation(start_from_slide=1):
             print(f"🔊 Speaking Slide {curr_slide} in Real Voice (en_0)...")
             play_audio(audio)
 
-        # Automatically advance through subsequent slides up to Slide 7
-        for next_s in range(curr_slide + 1, 8):
+        # Automatically advance through subsequent slides up to total_slides
+        for next_s in range(curr_slide + 1, total_slides + 1):
             time.sleep(1.2)  # Natural breath pause before advancing
-            print(f"\n➡️ [AUTO-ADVANCE] Slide {next_s - 1} finished! Automatically advancing PowerPoint to Slide {next_s}...")
+            print(f"\n➡️ [AUTO-ADVANCE] Slide {next_s - 1} finished! Automatically advancing Google Slides to Slide {next_s}...")
             speech, audio, stat = execute_action("next")
             display_slide_card(next_s)
             print_myra_speech(speech)
@@ -326,7 +323,7 @@ def run_auto_presentation(start_from_slide=1):
                 play_audio(audio)
 
         print("\n" + "★" * 70)
-        print("🎉 [PRESENTATION FINISHED] All 7 slides delivered flawlessly!")
+        print(f"🎉 [PRESENTATION FINISHED] All {total_slides} slides delivered flawlessly!")
         print("❓ Floor is open for Q&A! Type 'ask <your question>' to ask Myra anything.")
         print("★" * 70 + "\n")
 
@@ -334,18 +331,19 @@ def run_auto_presentation(start_from_slide=1):
         print("\n\n⏸️ Presentation paused by user. Returning to command prompt.\n")
 
 def list_all_slides():
-    """Prints a summary of all 7 slides with scripts."""
+    """Prints a summary of all 8 slides with scripts."""
     print("\n" + "=" * 70)
-    print("📊 PRESENTATION PROGRAM: 7 Custom Scripted Slides")
+    print("📊 PRESENTATION PROGRAM: 8 Custom Scripted Slides")
     print("=" * 70)
     titles = [
-        "Introduction – Meet Myra",
+        "Welcome & Cover – Meet Myra",
+        "Team Overview – The Real Star",
         "My Brain – Large Language Models",
         "How I Experience the World – Multimodal AI",
         "Connecting Vision & Language",
         "Memory & Proactive Behavior",
-        "My Voice and Embodiment",
-        "Real-World Applications & The Future"
+        "My Voice and Embodiment (3D Avatar)",
+        "Real-World Applications, Future Vision & Q&A"
     ]
     for i, t in enumerate(titles, 1):
         preview = CUSTOM_SLIDE_SCRIPTS.get(i, "")[:60] + "..."
@@ -357,15 +355,15 @@ def print_help():
     """Displays terminal command reference."""
     print("""
 ============================= COMMANDS =============================
-  start, s, [ENTER]: Start automatic hands-free presentation (Slides 1 to 7)
+  start, s, [ENTER]: Start automatic hands-free presentation (Slides 1 to 8)
   auto             : Start automatic hands-free presentation
-  goto <num>       : Jump directly to slide (e.g. 'goto 7')
+  goto <num>       : Jump directly to slide (e.g. 'goto 8')
   next, n          : Manually advance to next slide
   prev, p          : Manually go back to previous slide
   explain, r       : Re-speak the current slide
-  plan, pitch      : Ask Myra how she will present these 7 slides in character
+  plan, pitch      : Ask Myra how she will present these 8 slides in character
   ask <question>   : Ask Myra a question (e.g. 'ask are you really Mallu's girlfriend?')
-  list, slides     : View all 7 slide scripts
+  list, slides     : View all 8 slide scripts
   stop             : Stop presentation
   help, ?          : Show this help menu
   quit, exit, q    : Exit testing suite
@@ -382,14 +380,15 @@ def main():
     online = is_backend_online()
     if online:
         print("🟢 Backend Server Detected (http://127.0.0.1:8000)")
-        print("   -> Live VSeeFace expressions, Chrome App PowerPoint & Silero TTS active!\n")
+        print("   -> Live VSeeFace expressions, Google Slides Chrome App & Silero TTS active!\n")
     else:
         print("🟡 Standalone Mode (Backend not running)")
-        print("   -> Direct PPT launch, Myra's Original Silero Voice (en_0) active!\n")
+        print("   -> Direct Google Slides launch, Myra's Original Silero Voice (en_0) active!\n")
 
     presentation_manager.load_presentation()
-    deck_name = os.path.basename(presentation_manager.current_file or "myra.pptx")
-    print(f"📂 Active Deck: '{deck_name}' (7 custom scripted slides loaded)")
+    total_slides = presentation_manager.get_total_slide_count()
+    deck_name = os.path.basename(presentation_manager.current_file or "Google Slides Deck")
+    print(f"📂 Active Deck: '{deck_name}' ({total_slides} custom scripted slides loaded)")
     print("💡 Press [ENTER] or type 'start' to start the automatic hands-free presentation!\n")
 
     while True:
@@ -417,7 +416,8 @@ def main():
             list_all_slides()
 
         elif cmd_lower in ["plan", "pitch", "preview", "how will you present", "strategy"]:
-            question = "How will you present these 7 slides being in your character? Walk me through your plan and how you'll present each slide."
+            total_slides = presentation_manager.get_total_slide_count()
+            question = f"How will you present these {total_slides} slides being in your character? Walk me through your plan and how you'll present each slide."
             print(f"\n❓ Asking Myra: '{question}'...\n")
             speech = standalone_query_ollama(question, initial_emote="smug")
             print_myra_speech(speech)
@@ -433,12 +433,13 @@ def main():
             parts = cmd.split()
             if len(parts) >= 2 and parts[1].isdigit():
                 num = int(parts[1])
-                if 1 <= num <= 7:
+                total_slides = presentation_manager.get_total_slide_count()
+                if 1 <= num <= total_slides:
                     run_auto_presentation(start_from_slide=num)
                 else:
-                    print("Please specify a slide between 1 and 7.")
+                    print(f"Please specify a slide between 1 and {total_slides}.")
             else:
-                print("Usage: goto <slide_number> (e.g. 'goto 7')")
+                print("Usage: goto <slide_number> (e.g. 'goto 8')")
 
         elif cmd_lower in ["next", "n"]:
             speech, audio, stat = execute_action("next")
