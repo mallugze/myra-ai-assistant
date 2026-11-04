@@ -218,13 +218,50 @@ def detect_audio_devices(verbose: bool = True) -> dict:
 
     return config
 
+def is_vb_cable_listen_enabled() -> bool:
+    """
+    Checks Windows registry to see if 'Listen to this device' is enabled
+    on CABLE Output (which loops VB-Cable directly into the speakers).
+    """
+    try:
+        import winreg
+        key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture"
+        access = winreg.KEY_READ | winreg.KEY_WOW64_64KEY
+        root = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, access)
+        num_keys = winreg.QueryInfoKey(root)[0]
+        for i in range(num_keys):
+            guid = winreg.EnumKey(root, i)
+            try:
+                pk = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, f"{key_path}\\{guid}\\Properties", 0, access)
+                dev_name = ""
+                listen_val = None
+                for j in range(winreg.QueryInfoKey(pk)[1]):
+                    k, v, _ = winreg.EnumValue(pk, j)
+                    if k.endswith("{a45c254e-df1c-4efd-8020-67d146a850e0},2") or k.endswith("{b3f8fa53-0004-438e-9003-51a46e139bfc},6"):
+                        dev_name = v
+                    if "24dbb0fc-9311-4b3d-9cf0-18ff155639d4},1" in k:
+                        listen_val = v
+                winreg.CloseKey(pk)
+                if dev_name and any(x in dev_name.lower() for x in ["cable", "vb-audio"]):
+                    if listen_val and b'\xff\xff' in listen_val:
+                        return True
+            except Exception:
+                pass
+        winreg.CloseKey(root)
+    except Exception:
+        pass
+    return False
+
 def play_audio_dual(file_path: str, audio_config: dict = None):
     """
     Plays audio to the prioritized output device following the strict user policy:
     1. First check if headphones are connected.
     2. If YES (headphones connected): Speak in HEADPHONES ONLY.
        (Never route audio to laptop speakers or secondary virtual streams that bleed into laptop speakers).
-    3. If NO (headphones not connected): Speak using LAPTOP SPEAKERS + VB-Cable for VSeeFace.
+    3. If NO (headphones not connected):
+       - If Windows 'Listen to this device' is enabled on VB-Cable:
+         Stream exclusively to VB-Cable (VB-Cable drives VSeeFace lip-sync, and Windows forwards it to Speakers with ZERO double voice).
+       - Otherwise, stream to Speakers (+ VB-Cable if available).
     Includes multi-layer fallback to default audio device and winsound so words are never lost.
     """
     if not file_path or not os.path.exists(file_path):
@@ -238,61 +275,62 @@ def play_audio_dual(file_path: str, audio_config: dict = None):
     is_hp = audio_config.get('is_headphones', False)
     vb_dev = audio_config.get('vb_cable_device')
 
+    vb_listen_active = is_vb_cable_listen_enabled()
+
     if is_hp:
         print(f"[AUDIO] Headphones Connected: Outputting speech exclusively to '{out_name}'.")
+        target_devs = [out_dev]
     else:
-        print(f"[AUDIO] Headphones Not Detected: Outputting speech to Laptop Speakers '{out_name}'.")
+        if vb_dev is not None and vb_listen_active:
+            print(f"[AUDIO] Laptop Speakers + VSeeFace Lip-Sync Active: Single stream via VB-Cable (eliminates double voice).")
+            target_devs = [vb_dev]
+        elif vb_dev is not None:
+            print(f"[AUDIO] Laptop Speakers '{out_name}' + VB-Cable Lip-Sync Active.")
+            target_devs = [out_dev, vb_dev]
+        else:
+            print(f"[AUDIO] Headphones Not Detected: Outputting speech to Laptop Speakers '{out_name}'.")
+            target_devs = [out_dev]
 
     played_successfully = False
 
     try:
         data, fs = sf.read(file_path, dtype='float32')
 
-        # Add 400ms safety tail silence buffer to guarantee DAC / Bluetooth hardware flush
-        tail_silence = np.zeros(int(fs * 0.40), dtype=np.float32)
+        # Add 350ms safety tail silence buffer to guarantee DAC / Bluetooth hardware flush
+        tail_silence = np.zeros(int(fs * 0.35), dtype=np.float32)
         if data.ndim == 1:
             data = np.concatenate([data, tail_silence])
         else:
-            tail_silence = np.zeros((int(fs * 0.40), data.shape[1]), dtype=np.float32)
+            tail_silence = np.zeros((int(fs * 0.35), data.shape[1]), dtype=np.float32)
             data = np.concatenate([data, tail_silence], axis=0)
 
-        # Synchronous dual-stream: Primary output (Headphones/Speakers) + VB-Cable (VSeeFace Lip-Sync)
         channels = 1 if data.ndim == 1 else data.shape[1]
-        s_out = None
-        s_vb = None
+        streams = []
 
-        try:
-            s_out = sd.OutputStream(device=out_dev, channels=channels, samplerate=fs)
-            s_out.start()
-        except Exception as e_out:
-            print(f"--- [AUDIO ROUTER] Primary stream notice: {e_out} ---")
-
-        if vb_dev is not None and vb_dev != out_dev:
+        for d_idx in target_devs:
             try:
-                s_vb = sd.OutputStream(device=vb_dev, channels=channels, samplerate=fs)
-                s_vb.start()
-            except Exception as e_vb:
-                s_vb = None
+                s = sd.OutputStream(device=d_idx, channels=channels, samplerate=fs)
+                s.start()
+                streams.append(s)
+            except Exception as e_stream:
+                print(f"--- [AUDIO ROUTER] Notice opening stream on device [{d_idx}]: {e_stream} ---")
 
-        # Lock-step chunk streaming guarantees zero clock drift between speakers and lip-sync
-        block_size = 2048
-        for i in range(0, len(data), block_size):
-            chunk = data[i:i + block_size]
-            if s_out:
-                s_out.write(chunk)
-            if s_vb:
-                s_vb.write(chunk)
+        if streams:
+            block_size = 2048
+            for i in range(0, len(data), block_size):
+                chunk = data[i:i + block_size]
+                for s in streams:
+                    s.write(chunk)
 
-        if s_out:
-            s_out.stop()
-            s_out.close()
+            for s in streams:
+                try:
+                    s.stop()
+                    s.close()
+                except Exception:
+                    pass
+
             played_successfully = True
-
-        if s_vb:
-            s_vb.stop()
-            s_vb.close()
-
-        time.sleep(0.20)
+            time.sleep(0.20)
 
     except Exception as e:
         print(f"--- [AUDIO ROUTER] SoundDevice playback notice: {e} ---")
