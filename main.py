@@ -604,12 +604,22 @@ def ensure_ollama_running():
     print("--- [BRAIN] Ollama is not running! Auto-starting Ollama service... ---")
     try:
         import subprocess
+        ollama_bin = "ollama"
+        std_ollama_path = r"C:\Users\mallu\AppData\Local\Programs\Ollama\ollama.exe"
+        if os.path.exists(std_ollama_path):
+            ollama_bin = std_ollama_path
+
+        creationflags = 0
+        if os.name == 'nt':
+            creationflags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+
         subprocess.Popen(
-            ["ollama", "serve"],
+            [ollama_bin, "serve"],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags
         )
-        for _ in range(12):
+        for _ in range(16):
             time.sleep(0.5)
             try:
                 r = requests.get("http://localhost:11434/api/tags", timeout=1)
@@ -731,10 +741,53 @@ def trigger_proactive_speech(event_type: str, event_data=None):
 
 def inspect_room_vlm(frame=None, custom_prompt=None):
     """Captures a frame and queries Ollama VLM (moondream) for a concise room/object summary."""
-    global current_frame
+    global current_frame, active_camera_instance, current_detected_objects
+
+    # 1. Ensure Ollama service is alive
+    ensure_ollama_running()
+
+    # 2. Acquire a valid frame, auto-starting camera if needed
     target_frame = frame if frame is not None else current_frame
+    if target_frame is None and active_camera_instance is not None:
+        ret, cam_f = active_camera_instance.read()
+        if ret and cam_f is not None:
+            target_frame = cam_f
+
     if target_frame is None:
-        return "Camera frame is currently unavailable."
+        if active_camera_instance is None or not vision_engine.running:
+            print("--- [VLM] Camera inactive, auto-starting webcam hardware for visual inspection... ---")
+            start_camera_background()
+
+        # Wait for webcam hardware initialization, exposure and first frame
+        for _ in range(40):
+            time.sleep(0.1)
+            if current_frame is not None:
+                target_frame = current_frame
+                break
+            if active_camera_instance is not None:
+                ret, cam_f = active_camera_instance.read()
+                if ret and cam_f is not None:
+                    target_frame = cam_f
+                    break
+
+    # Instant hardware snapshot fallback if camera loop is warming up
+    if target_frame is None:
+        try:
+            tmp_cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+            if not tmp_cap.isOpened():
+                tmp_cap = cv2.VideoCapture(0)
+            if tmp_cap.isOpened():
+                ret, snap = tmp_cap.read()
+                tmp_cap.release()
+                if ret and snap is not None:
+                    target_frame = snap
+                    if current_frame is None:
+                        current_frame = snap
+        except Exception:
+            pass
+
+    if target_frame is None:
+        return "Camera frame is currently unavailable. Please check that your webcam is connected."
 
     try:
         h, w = target_frame.shape[:2]
@@ -745,7 +798,11 @@ def inspect_room_vlm(frame=None, custom_prompt=None):
         _, buffer = cv2.imencode('.jpg', target_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         img_b64 = base64.b64encode(buffer).decode('utf-8')
 
-        vlm_prompt = custom_prompt or "Describe what is visible in this room, focusing on objects, people, and what the person in front of the camera is holding or doing. Keep it concise (2 sentences max)."
+        vlm_prompt = custom_prompt or (
+            "Describe what is visible in front of the camera, focusing on the person, "
+            "their expression, what they are holding or wearing, and their immediate surroundings. "
+            "Keep it concise (1 to 2 sentences max)."
+        )
 
         payload = {
             "model": "moondream",
@@ -754,9 +811,22 @@ def inspect_room_vlm(frame=None, custom_prompt=None):
             "stream": False
         }
 
-        res = requests.post("http://localhost:11434/api/generate", json=payload, timeout=45)
+        res = requests.post("http://localhost:11434/api/generate", json=payload, timeout=35)
         if res.status_code == 200:
             summary = res.json().get("response", "").strip()
+            # Append live YOLO-detected objects and target identity for multimodal precision
+            with vision_engine.lock:
+                yolo_objs = list(set([o["name"] for o in vision_engine.cached_objects]))
+                target_person = vision_engine.cached_target_name
+
+            extra_details = []
+            if target_person and target_person != "None":
+                extra_details.append(f"Person in view: {target_person}")
+            if yolo_objs:
+                extra_details.append(f"Objects detected: {', '.join(yolo_objs)}")
+            if extra_details:
+                summary = f"{summary} ({'; '.join(extra_details)})"
+
             print(f"--- [VLM MOONDREAM SUMMARY]: {summary} ---")
             return summary
         else:
@@ -950,7 +1020,7 @@ class AsyncVisionEngine:
             time.sleep(0.03)
 
 vision_engine = AsyncVisionEngine()
-ENABLE_BACKGROUND_CAMERA = False  # Set to True only if background webcam tracking is explicitly desired
+ENABLE_BACKGROUND_CAMERA = True  # Automatically starts camera hardware and vision loop on backend boot
 active_camera_instance = None
 camera_thread = None
 
@@ -962,7 +1032,7 @@ def start_camera_background():
     vision_engine.running = True
     camera_thread = threading.Thread(target=vision_monitor_loop, daemon=True)
     camera_thread.start()
-    system_monitor.log("EYES", "INFO", "Webcam hardware started by user.")
+    system_monitor.log("EYES", "INFO", "Webcam hardware started.")
     return True
 
 def stop_camera_background():
@@ -977,13 +1047,35 @@ def stop_camera_background():
         active_camera_instance = None
     system_monitor.update_frame(None)
     current_frame = None
-    cv2.destroyAllWindows()
+    try:
+        cv2.destroyAllWindows()
+    except Exception:
+        pass
+    if camera_thread is not None and camera_thread.is_alive():
+        try:
+            camera_thread.join(timeout=0.8)
+        except Exception:
+            pass
+    camera_thread = None
     system_monitor.log("EYES", "INFO", "Webcam hardware stopped and released.")
     return True
 
 def vision_monitor_loop():
     """Main camera capture & render loop running at silky-smooth 30+ FPS."""
     global current_frame, system_status, face_app_instance, active_camera_instance
+
+    print("--- [EYES] Connecting to Webcam hardware... ---")
+    cam = ThreadedCamera(0)
+    active_camera_instance = cam
+    if not cam.isOpened():
+        print("--- [EYES] Camera not found or busy. ---")
+        active_camera_instance = None
+        return
+
+    # Grab initial frame immediately
+    ret, initial_frame = cam.read()
+    if ret and initial_frame is not None:
+        current_frame = initial_frame
 
     print("--- [EYES] Initializing High-Performance Vision Engine (YOLO11s + InsightFace)... ---")
     yolo = YOLO("yolo11s.pt")
@@ -1011,13 +1103,6 @@ def vision_monitor_loop():
         daemon=True
     )
     ai_thread.start()
-
-    cam = ThreadedCamera(0)
-    active_camera_instance = cam
-    if not cam.isOpened():
-        print("--- [EYES] Camera not found or busy. ---")
-        active_camera_instance = None
-        return
 
     try:
         cv2.namedWindow("Myra's Eyes", cv2.WINDOW_NORMAL)
@@ -1086,14 +1171,20 @@ def vision_monitor_loop():
             # Update monitor stream frame
             system_monitor.update_frame(display_frame)
 
-            cv2.imshow("Myra's Eyes", display_frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            try:
+                cv2.imshow("Myra's Eyes", display_frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+            except Exception:
+                pass
     finally:
         vision_engine.running = False
         cam.release()
         active_camera_instance = None
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
         print("--- [EYES] Camera hardware released successfully. ---")
 
 # -------------------- PPT & TASK AUTOMATION --------------------
@@ -1406,6 +1497,47 @@ def chat(request: ChatRequest):
             "status": presentation_manager.get_status()
         }
 
+    # B0. Camera & Eyes Voice Control Commands
+    is_cam_open = any(k in user_lower for k in [
+        "open your eyes", "start camera", "turn on camera", "open camera", "turn on the camera",
+        "start the camera", "open the camera", "enable vision", "activate vision", "eyes open",
+        "aankhein kholo", "camera on karo", "camera start karo", "start vision", "turn on vision"
+    ])
+    if is_cam_open:
+        start_camera_background()
+        trigger_vmc_expression("Joy", 1.0, duration=2.5)
+        prompt = "[EVENT: Mallu commanded you to open your eyes / turn on your vision camera. In your cute, playful, slightly teasing anime waifu personality, tell him your eyes are open and you're watching him now.]"
+        spoken_reply, audio_file = query_myra_llm(prompt=prompt, initial_emote="smile")
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO conversations (role, content) VALUES (?, ?)", ("user", user_message))
+                cursor.execute("INSERT INTO conversations (role, content) VALUES (?, ?)", ("assistant", spoken_reply))
+                conn.commit()
+        except Exception:
+            pass
+        return {"response": spoken_reply, "raw_response": spoken_reply, "audio_file": audio_file}
+
+    is_cam_close = any(k in user_lower for k in [
+        "close your eyes", "stop camera", "turn off camera", "turn off the camera", "stop the camera",
+        "shut your eyes", "disable vision", "eyes closed", "eyes close",
+        "aankhein band karo", "camera band karo", "camera off karo", "stop vision"
+    ])
+    if is_cam_close:
+        stop_camera_background()
+        trigger_vmc_expression("Sorrow", 0.7, duration=2.5)
+        prompt = "[EVENT: Mallu told you to close your eyes / turn off your camera. In your playful tsundere waifu style, say you're closing your eyes and tease him not to do anything sneaky while you aren't looking.]"
+        spoken_reply, audio_file = query_myra_llm(prompt=prompt, initial_emote="pout")
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO conversations (role, content) VALUES (?, ?)", ("user", user_message))
+                cursor.execute("INSERT INTO conversations (role, content) VALUES (?, ?)", ("assistant", spoken_reply))
+                conn.commit()
+        except Exception:
+            pass
+        return {"response": spoken_reply, "raw_response": spoken_reply, "audio_file": audio_file}
+
     # B. Classroom Mass Introduction Trigger
     if any(k in user_lower for k in ["meet my class", "introduce you to my class", "meet the class", "say hi to my class", "introduce yourself to everyone", "introduce yourself to my class", "meet everyone in class", "meet all of them"]):
         headcount = max(vision_engine.cached_person_count, 1)
@@ -1590,10 +1722,12 @@ def chat(request: ChatRequest):
 
     # 4. Check for On-Demand VLM Room Inspection
     vlm_context = ""
-    is_vlm_query = any(k in user_message.lower() for k in [
+    is_vlm_query = any(k in user_lower for k in [
         "look around", "what is in my room", "what's in my room", "what do you see",
         "what am i holding", "what's in my hand", "describe the room", "inspect room",
-        "what do you notice", "see around", "take a look", "kya dikh raha hai", "room me kya hai"
+        "what do you notice", "see around", "take a look", "kya dikh raha hai", "room me kya hai",
+        "can you see me", "look at me", "do you see me", "can you look at me", "what am i doing",
+        "what do you see in front of you", "take a look at me", "dekho", "kya dekh rahi ho"
     ])
     if is_vlm_query:
         print("--- [BRAIN] User requested visual room inspection, querying Moondream VLM... ---")

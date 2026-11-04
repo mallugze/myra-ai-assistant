@@ -309,7 +309,7 @@ class PresentationManager:
             self.focus_presentation_window()
             try:
                 import pyautogui
-                pyautogui.press('f11')
+                # Never force F11 on user's regular browser session
                 time.sleep(0.3)
                 w, h = pyautogui.size()
                 pyautogui.click(w // 2, h // 2)
