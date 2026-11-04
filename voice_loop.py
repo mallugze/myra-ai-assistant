@@ -23,7 +23,7 @@ import asyncio
 
 SAMPLE_RATE = 16000        # Native Whisper sampling rate
 BASE_THRESHOLD = 0.0040    # High-sensitivity RMS speech detection volume threshold (lowered from 0.008)
-SILENCE_LIMIT = 1.0        # Seconds of silence after speech to finish utterance
+SILENCE_LIMIT = 0.65       # Snappy silence limit after speech (lowered from 1.0s to eliminate 350ms of dead air)
 MAX_RECORD_TIME = 8.0      # Hard maximum recording duration (prevents infinite loop/getting stuck)
 MAX_IDLE_TIME = 15         # Max silence before checking idle
 ACTIVE_TIMEOUT = 35        # Seconds of inactivity before sleeping
@@ -171,7 +171,7 @@ def wake_detected(text):
 
 import soundfile as sf
 import threading
-from audio_router import detect_audio_devices, play_audio_dual
+from audio_router import detect_audio_devices, play_audio_dual, get_cached_audio_config
 
 # Intelligently discover and prioritize headphones / headset mic over built-in devices
 audio_cfg = detect_audio_devices(verbose=True)
@@ -240,7 +240,8 @@ def safe_play(file_path):
 
     is_speaking = True
     try:
-        play_audio_dual(file_path, audio_cfg)
+        active_cfg = get_cached_audio_config(max_age_sec=3.0)
+        play_audio_dual(file_path, active_cfg)
     except Exception as e:
         print(f"Audio Playback Warning: {e}, falling back to winsound...")
         try:
@@ -249,7 +250,7 @@ def safe_play(file_path):
             pass
     finally:
         is_speaking = False
-        time.sleep(0.5)
+        time.sleep(0.15)
 
 def record_audio_in_memory():
     """

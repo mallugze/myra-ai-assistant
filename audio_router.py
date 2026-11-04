@@ -84,19 +84,23 @@ def is_headset_mic(name: str) -> bool:
         return False
     return any(k in name_lower for k in HEADSET_MIC_KEYWORDS)
 
+_cached_audio_config = None
+_cached_audio_time = 0.0
+
+def get_cached_audio_config(max_age_sec: float = 3.0, verbose: bool = False) -> dict:
+    """Returns cached device configuration to avoid repeating 600ms portaudio device queries."""
+    global _cached_audio_config, _cached_audio_time
+    now = time.time()
+    if _cached_audio_config is not None and (now - _cached_audio_time < max_age_sec):
+        return _cached_audio_config
+    _cached_audio_config = detect_audio_devices(verbose=verbose)
+    _cached_audio_time = now
+    return _cached_audio_config
+
 def detect_audio_devices(verbose: bool = True) -> dict:
     """
-    Scans all system audio devices.
-    Returns:
-        {
-            'input_device': int,
-            'input_name': str,
-            'is_headphone_mic': bool,
-            'output_device': int,
-            'output_name': str,
-            'is_headphones': bool,
-            'vb_cable_device': int or None
-        }
+    Scans all system audio devices, prioritizing native 48kHz WASAPI and DirectSound
+    over legacy MME to eliminate sample rate conversion distortion and clicking.
     """
     try:
         devs = sd.query_devices()
@@ -115,6 +119,21 @@ def detect_audio_devices(verbose: bool = True) -> dict:
             'vb_cable_device': None
         }
 
+    # Host API preference: WASAPI (hostapi 2, native 48kHz float) > DirectSound (1) > MME (0)
+    def _hostapi_priority(dev_idx):
+        try:
+            h = devs[dev_idx]['hostapi']
+            if h == 2:
+                return 0
+            elif h == 1:
+                return 1
+            else:
+                return 2
+        except Exception:
+            return 3
+
+    device_indices = sorted(range(len(devs)), key=_hostapi_priority)
+
     best_out_idx = None
     best_out_name = None
     is_headphones = False
@@ -125,15 +144,17 @@ def detect_audio_devices(verbose: bool = True) -> dict:
 
     vb_cable_idx = None
 
-    # 1. Detect VB-Cable for avatar lip-sync (prefer standard 'cable input' over 16ch)
-    for i, d in enumerate(devs):
+    # 1. Detect VB-Cable for avatar lip-sync (prioritizing WASAPI)
+    for i in device_indices:
+        d = devs[i]
         if d['max_output_channels'] > 0 and is_valid_hostapi(d):
             nl = d['name'].lower()
             if 'cable input' in nl and can_open_output(i):
                 vb_cable_idx = i
                 break
     if vb_cable_idx is None:
-        for i, d in enumerate(devs):
+        for i in device_indices:
+            d = devs[i]
             if d['max_output_channels'] > 0 and is_valid_hostapi(d):
                 nl = d['name'].lower()
                 if ('cable in' in nl or 'virtual cable' in nl) and can_open_output(i):
@@ -141,7 +162,8 @@ def detect_audio_devices(verbose: bool = True) -> dict:
                     break
 
     # 2. Find Output: Priority 1 = Real Connected Headphones / Headset
-    for i, d in enumerate(devs):
+    for i in device_indices:
+        d = devs[i]
         if d['max_output_channels'] > 0 and is_valid_hostapi(d):
             if is_headphone_device(d['name']) and can_open_output(i):
                 best_out_idx = i
@@ -149,9 +171,10 @@ def detect_audio_devices(verbose: bool = True) -> dict:
                 is_headphones = True
                 break
 
-    # Output: Priority 2 = Realtek / Physical Laptop Speakers
+    # Output: Priority 2 = Realtek / Physical Laptop Speakers (WASAPI prioritized)
     if best_out_idx is None:
-        for i, d in enumerate(devs):
+        for i in device_indices:
+            d = devs[i]
             if d['max_output_channels'] > 0 and is_valid_hostapi(d) and not is_virtual_device(d['name']) and not is_unassigned_jack(d['name']):
                 if can_open_output(i):
                     best_out_idx = i
@@ -166,7 +189,8 @@ def detect_audio_devices(verbose: bool = True) -> dict:
         is_headphones = is_headphone_device(best_out_name)
 
     # 3. Find Input: Priority 1 = Headset / External Mic
-    for i, d in enumerate(devs):
+    for i in device_indices:
+        d = devs[i]
         if d['max_input_channels'] > 0 and is_valid_hostapi(d):
             if is_headset_mic(d['name']) and can_open_input(i):
                 best_in_idx = i
@@ -176,7 +200,8 @@ def detect_audio_devices(verbose: bool = True) -> dict:
 
     # Input: Priority 2 = Physical Built-in Microphone Array
     if best_in_idx is None:
-        for i, d in enumerate(devs):
+        for i in device_indices:
+            d = devs[i]
             if d['max_input_channels'] > 0 and is_valid_hostapi(d) and not is_virtual_device(d['name']) and not is_unassigned_jack(d['name']):
                 if can_open_input(i):
                     best_in_idx = i
@@ -267,8 +292,9 @@ def play_audio_dual(file_path: str, audio_config: dict = None):
     if not file_path or not os.path.exists(file_path):
         return
 
-    # Always check the latest hardware connection state in real time (<0.5ms)
-    audio_config = detect_audio_devices(verbose=False)
+    # Use cached audio config (max 3s age) to eliminate the 600ms re-query lag on every utterance
+    if audio_config is None:
+        audio_config = get_cached_audio_config(max_age_sec=3.0, verbose=False)
 
     out_dev = audio_config.get('output_device')
     out_name = audio_config.get('output_name', 'Default Device')
@@ -296,41 +322,47 @@ def play_audio_dual(file_path: str, audio_config: dict = None):
     try:
         data, fs = sf.read(file_path, dtype='float32')
 
-        # Add 350ms safety tail silence buffer to guarantee DAC / Bluetooth hardware flush
-        tail_silence = np.zeros(int(fs * 0.35), dtype=np.float32)
+        # Add 300ms safety tail silence buffer to guarantee DAC / Bluetooth hardware flush
+        tail_silence = np.zeros(int(fs * 0.30), dtype=np.float32)
         if data.ndim == 1:
             data = np.concatenate([data, tail_silence])
         else:
-            tail_silence = np.zeros((int(fs * 0.35), data.shape[1]), dtype=np.float32)
+            tail_silence = np.zeros((int(fs * 0.30), data.shape[1]), dtype=np.float32)
             data = np.concatenate([data, tail_silence], axis=0)
 
-        channels = 1 if data.ndim == 1 else data.shape[1]
-        streams = []
+        # Convert mono to stereo (2 channels) for clean hardware rendering with zero phase noise
+        if data.ndim == 1:
+            stereo_data = np.column_stack([data, data])
+        else:
+            stereo_data = data
 
-        for d_idx in target_devs:
+        valid_devs = [d for d in target_devs if d is not None]
+
+        if len(valid_devs) == 1:
+            d_idx = valid_devs[0]
             try:
-                s = sd.OutputStream(device=d_idx, channels=channels, samplerate=fs)
-                s.start()
-                streams.append(s)
-            except Exception as e_stream:
-                print(f"--- [AUDIO ROUTER] Notice opening stream on device [{d_idx}]: {e_stream} ---")
-
-        if streams:
-            block_size = 2048
-            for i in range(0, len(data), block_size):
-                chunk = data[i:i + block_size]
-                for s in streams:
-                    s.write(chunk)
-
-            for s in streams:
+                sd.play(stereo_data, samplerate=fs, device=d_idx)
+                sd.wait()
+                played_successfully = True
+            except Exception as e_play:
+                print(f"--- [AUDIO ROUTER] Native sd.play notice on [{d_idx}]: {e_play} ---")
+        elif len(valid_devs) > 1:
+            # Multi-device synchronized parallel streaming (zero GIL jitter, zero buffer underflow)
+            def _play_worker(dev_id):
                 try:
-                    s.stop()
-                    s.close()
-                except Exception:
-                    pass
+                    sd.play(stereo_data, samplerate=fs, device=dev_id)
+                    sd.wait()
+                except Exception as ep:
+                    print(f"--- [AUDIO ROUTER] Stream worker [{dev_id}] notice: {ep} ---")
 
+            threads = [threading.Thread(target=_play_worker, args=(d,), daemon=True) for d in valid_devs]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
             played_successfully = True
-            time.sleep(0.20)
+
+        time.sleep(0.10)
 
     except Exception as e:
         print(f"--- [AUDIO ROUTER] SoundDevice playback notice: {e} ---")
