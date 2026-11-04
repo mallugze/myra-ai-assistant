@@ -664,7 +664,11 @@ class PresentationManager:
 
         self.current_slide_index += 1
         self._native_next_slide()
-        return self.present_current_slide(query_llm_fn=query_llm_fn)
+        res = self.present_current_slide(query_llm_fn=query_llm_fn)
+        # If we have reached the final slide (e.g. Slide 8), conclude presentation mode
+        if self.current_slide_index + 1 >= total_slides:
+            self.is_presenting = False
+        return res
 
     def prev_slide(self, query_llm_fn=None):
         """Returns to previous slide."""

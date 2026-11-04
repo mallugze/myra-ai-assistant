@@ -197,7 +197,7 @@ def detect_audio_devices(verbose: bool = True) -> dict:
         'output_device': best_out_idx,
         'output_name': best_out_name,
         'is_headphones': is_headphones,
-        'vb_cable_device': None if is_headphones else vb_cable_idx
+        'vb_cable_device': vb_cable_idx
     }
 
     if verbose:
@@ -256,28 +256,43 @@ def play_audio_dual(file_path: str, audio_config: dict = None):
             tail_silence = np.zeros((int(fs * 0.40), data.shape[1]), dtype=np.float32)
             data = np.concatenate([data, tail_silence], axis=0)
 
-        # Single dedicated stream: Headphones if connected, otherwise Laptop Speakers
-        # (Never play simultaneously to VB-Cable and Speakers, as that causes double voice / echo)
+        # Synchronous dual-stream: Primary output (Headphones/Speakers) + VB-Cable (VSeeFace Lip-Sync)
+        channels = 1 if data.ndim == 1 else data.shape[1]
+        s_out = None
+        s_vb = None
+
         try:
-            s_out = sd.OutputStream(device=out_dev, channels=1 if data.ndim == 1 else data.shape[1], samplerate=fs)
+            s_out = sd.OutputStream(device=out_dev, channels=channels, samplerate=fs)
             s_out.start()
-            block_size = 2048
-            for i in range(0, len(data), block_size):
-                chunk = data[i:i + block_size]
+        except Exception as e_out:
+            print(f"--- [AUDIO ROUTER] Primary stream notice: {e_out} ---")
+
+        if vb_dev is not None and vb_dev != out_dev:
+            try:
+                s_vb = sd.OutputStream(device=vb_dev, channels=channels, samplerate=fs)
+                s_vb.start()
+            except Exception as e_vb:
+                s_vb = None
+
+        # Lock-step chunk streaming guarantees zero clock drift between speakers and lip-sync
+        block_size = 2048
+        for i in range(0, len(data), block_size):
+            chunk = data[i:i + block_size]
+            if s_out:
                 s_out.write(chunk)
+            if s_vb:
+                s_vb.write(chunk)
+
+        if s_out:
             s_out.stop()
             s_out.close()
             played_successfully = True
-            time.sleep(0.25)
-        except Exception as e_out:
-            print(f"--- [AUDIO ROUTER] Primary stream notice: {e_out} ---")
-            try:
-                sd.play(data, fs, device=out_dev)
-                sd.wait()
-                played_successfully = True
-                time.sleep(0.25)
-            except Exception:
-                pass
+
+        if s_vb:
+            s_vb.stop()
+            s_vb.close()
+
+        time.sleep(0.20)
 
     except Exception as e:
         print(f"--- [AUDIO ROUTER] SoundDevice playback notice: {e} ---")

@@ -457,32 +457,91 @@ def handle_proactive_event(event):
 _last_status_poll = 0
 _cached_status = {}
 
-def is_auto_presentation_intent(text):
-    """Detects if user asked Myra to deliver the presentation or whole deck."""
+def is_conversational_about_presentation(text: str) -> bool:
+    """
+    Detects if the user is having a casual conversation, asking questions,
+    discussing feelings, or talking about the presentation in a conversational context,
+    rather than giving an actual imperative command to start presenting.
+    """
     if not text:
         return False
     text_lower = text.lower().strip()
-    clean = re.sub(r'[^\w\s]', '', text_lower)
+    clean = re.sub(r'[^\w\s]', ' ', text_lower)
+    clean_spaced = f" {clean} "
 
-    triggers = [
-        "present the ppt", "present ppt", "present the whole ppt", "present whole ppt",
-        "start presentation", "start the presentation", "start the ppt", "start ppt",
-        "present our project", "present project", "present the slides", "present slides",
-        "present all slides", "can you present the ppt", "can you present the whole ppt",
-        "can you present", "run the presentation", "run the ppt", "show the presentation",
-        "shuru karo presentation", "presentation start", "present everything"
+    # 1. Inquiries about feelings, thoughts, opinions, preparation, review, or feedback
+    conversational_phrases = [
+        "how did you feel", "how you felt", "how do you feel", "how are you feeling",
+        "felt presenting", "felt about", "what did you think", "what do you think",
+        "tell me how", "tell us how", "tell me about", "tell us about",
+        "are you ready", "are you nervous", "are you excited", "are you confident",
+        "did you like", "did you enjoy", "did you present", "did you see",
+        "how was", "how were", "how did", "why did you", "why do you",
+        "who made", "who helped", "who worked", "who created",
+        "explain what", "what is on slide", "what does the slide", "what does your ppt",
+        "can you tell me", "can you explain", "could you explain",
+        "do you remember", "did we do well", "how do you plan",
+        "good job", "great job", "well done", "congratulations", "proud of you",
+        "thank you for presenting", "thanks for presenting", "good presentation", "great presentation"
     ]
-    for t in triggers:
-        if t in text_lower or t in clean:
+    for p in conversational_phrases:
+        if p in text_lower:
             return True
 
-    words = set(clean.split())
-    actions = {"present", "start", "run", "show", "give", "explain"}
-    targets = {"ppt", "ppd", "pbt", "pdf", "presentation", "slides", "deck", "project"}
-    negations = {"stop", "end", "close", "dont", "next", "prev", "previous", "back"}
+    # 2. Conversational / temporal / hypothetical / future phrasing
+    temporal_markers = [
+        " tomorrow ", " yesterday ", " next week ", " in the morning ",
+        " later today ", " after class ", " before class ", " big day ",
+        " you are going to present ", " you're going to present ",
+        " when you present ", " while presenting ", " once you present "
+    ]
+    for m in temporal_markers:
+        if m in clean_spaced:
+            return True
 
-    if words.intersection(actions) and words.intersection(targets) and not words.intersection(negations):
-        return True
+    return False
+
+def is_start_presentation_command(text: str) -> bool:
+    """
+    Determines if the utterance is a genuine imperative command or direct request
+    to launch and deliver the presentation right now.
+    """
+    if not text:
+        return False
+
+    # If it is conversational discussion ABOUT the presentation, never start presentation
+    if is_conversational_about_presentation(text):
+        return False
+
+    text_lower = text.lower().strip()
+
+    # Direct imperative commands
+    direct_commands = [
+        "start presentation", "start the presentation", "start presenting",
+        "start the ppt", "start ppt", "start the ppd", "start ppd",
+        "present the ppt", "present ppt", "present the presentation",
+        "present our presentation", "present our project", "present the project",
+        "present project", "present the slides", "present slides", "present our slides",
+        "present the whole ppt", "present whole ppt", "present all slides", "present all the slides",
+        "present the deck", "present our deck", "present everything",
+        "open the presentation", "open presentation", "open the ppt", "open ppt",
+        "open the slides", "open slides", "launch presentation", "launch the presentation",
+        "launch the ppt", "launch ppt", "run presentation", "run the presentation", "run the ppt",
+        "shuru karo presentation", "presentation start", "presentation shuru karo"
+    ]
+    for cmd in direct_commands:
+        if cmd in text_lower:
+            return True
+
+    # Action requests to present now: "can you present the ppt", "can you present our project"
+    request_patterns = [
+        r'\b(can|could|will|please|would)\s+(you\s+)?(present|start|launch|run)\s+(the\s+|our\s+)?(ppt|ppd|presentation|slides|deck|project)\b',
+        r'\b(go\s+ahead\s+and\s+)?(present|start)\s+(the\s+|our\s+)?(ppt|ppd|presentation|slides|deck|project)\b',
+        r'\b(present|start)\s+it\s+now\b'
+    ]
+    for pattern in request_patterns:
+        if re.search(pattern, text_lower):
+            return True
 
     return False
 
@@ -539,6 +598,12 @@ def run_voice_auto_presentation(start_slide=1):
             except Exception as slide_err:
                 print(f"⚠️ [AUTO-ADVANCE NOTICE] Error presenting Slide {next_s}: {slide_err}")
                 break
+
+        # Mark presentation finished on backend so is_presenting resets to False
+        try:
+            requests.post("http://127.0.0.1:8000/present_ppt", json={"action": "stop"}, timeout=5)
+        except Exception:
+            pass
 
         print("\n" + "★" * 65)
         print(f"🎉 [PRESENTATION COMPLETE] All {total_slides} slides delivered flawlessly!")
@@ -651,7 +716,7 @@ if __name__ == "__main__":
                         print(f"🎀 [MYRA]: {reply}")
                     if reply_audio:
                         safe_play(reply_audio)
-                    if is_auto_presentation_intent(user_text):
+                    if is_start_presentation_command(user_text):
                         run_voice_auto_presentation()
                 else:
                     wake_replies = [
@@ -676,7 +741,7 @@ if __name__ == "__main__":
         if reply_audio:
             safe_play(reply_audio)
 
-        if is_auto_presentation_intent(user_text):
+        if is_start_presentation_command(user_text):
             run_voice_auto_presentation()
 
         time.sleep(0.3)

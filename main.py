@@ -1215,6 +1215,94 @@ def present_ppt_endpoint(req: PresentationRequest):
         "status": presentation_manager.get_status()
     }
 
+def is_conversational_about_presentation(text: str) -> bool:
+    """
+    Detects if the user is having a casual conversation, asking questions,
+    discussing feelings, or talking about the presentation in a conversational context,
+    rather than giving an actual imperative command to start presenting.
+    """
+    if not text:
+        return False
+    text_lower = text.lower().strip()
+    clean = re.sub(r'[^\w\s]', ' ', text_lower)
+    clean_spaced = f" {clean} "
+
+    # 1. Inquiries about feelings, thoughts, opinions, preparation, review, or feedback
+    conversational_phrases = [
+        "how did you feel", "how you felt", "how do you feel", "how are you feeling",
+        "felt presenting", "felt about", "what did you think", "what do you think",
+        "tell me how", "tell us how", "tell me about", "tell us about",
+        "are you ready", "are you nervous", "are you excited", "are you confident",
+        "did you like", "did you enjoy", "did you present", "did you see",
+        "how was", "how were", "how did", "why did you", "why do you",
+        "who made", "who helped", "who worked", "who created",
+        "explain what", "what is on slide", "what does the slide", "what does your ppt",
+        "can you tell me", "can you explain", "could you explain",
+        "do you remember", "did we do well", "how do you plan",
+        "good job", "great job", "well done", "congratulations", "proud of you",
+        "thank you for presenting", "thanks for presenting", "good presentation", "great presentation"
+    ]
+    for p in conversational_phrases:
+        if p in text_lower:
+            return True
+
+    # 2. Conversational / temporal / hypothetical / future phrasing
+    temporal_markers = [
+        " tomorrow ", " yesterday ", " next week ", " in the morning ",
+        " later today ", " after class ", " before class ", " big day ",
+        " you are going to present ", " you're going to present ",
+        " when you present ", " while presenting ", " once you present "
+    ]
+    for m in temporal_markers:
+        if m in clean_spaced:
+            return True
+
+    return False
+
+def is_start_presentation_command(text: str) -> bool:
+    """
+    Determines if the utterance is a genuine imperative command or direct request
+    to launch and deliver the presentation right now.
+    """
+    if not text:
+        return False
+
+    # If it is conversational discussion ABOUT the presentation, never start presentation
+    if is_conversational_about_presentation(text):
+        return False
+
+    text_lower = text.lower().strip()
+
+    # Direct imperative commands
+    direct_commands = [
+        "start presentation", "start the presentation", "start presenting",
+        "start the ppt", "start ppt", "start the ppd", "start ppd",
+        "present the ppt", "present ppt", "present the presentation",
+        "present our presentation", "present our project", "present the project",
+        "present project", "present the slides", "present slides", "present our slides",
+        "present the whole ppt", "present whole ppt", "present all slides", "present all the slides",
+        "present the deck", "present our deck", "present everything",
+        "open the presentation", "open presentation", "open the ppt", "open ppt",
+        "open the slides", "open slides", "launch presentation", "launch the presentation",
+        "launch the ppt", "launch ppt", "run presentation", "run the presentation", "run the ppt",
+        "shuru karo presentation", "presentation start", "presentation shuru karo"
+    ]
+    for cmd in direct_commands:
+        if cmd in text_lower:
+            return True
+
+    # Action requests to present now: "can you present the ppt", "can you present our project"
+    request_patterns = [
+        r'\b(can|could|will|please|would)\s+(you\s+)?(present|start|launch|run)\s+(the\s+|our\s+)?(ppt|ppd|presentation|slides|deck|project)\b',
+        r'\b(go\s+ahead\s+and\s+)?(present|start)\s+(the\s+|our\s+)?(ppt|ppd|presentation|slides|deck|project)\b',
+        r'\b(present|start)\s+it\s+now\b'
+    ]
+    for pattern in request_patterns:
+        if re.search(pattern, text_lower):
+            return True
+
+    return False
+
 @app.post("/chat")
 def chat(request: ChatRequest):
     global current_visual_state, last_interaction_time, system_status
@@ -1227,8 +1315,11 @@ def chat(request: ChatRequest):
     system_monitor.log("BRAIN", "INFO", f"User input: '{user_message[:70]}'")
 
     # A. Check for Autonomous Presentation Voice Commands
+    # Only evaluate presentation commands if the user is NOT having a conversational discussion about it
+    is_conv_about_ppt = is_conversational_about_presentation(user_message)
+
     # 1. Stop presentation
-    if presentation_manager.is_presenting and any(k in user_lower for k in ["stop presentation", "end presentation", "close presentation", "close slides", "stop presenting"]):
+    if presentation_manager.is_presenting and not is_conv_about_ppt and any(k in user_lower for k in ["stop presentation", "end presentation", "close presentation", "close slides", "stop presenting"]):
         spoken_reply, audio_file = presentation_manager.stop_presentation(query_llm_fn=query_myra_llm)
         try:
             with get_db() as conn:
@@ -1248,7 +1339,7 @@ def chat(request: ChatRequest):
     ]) or (
         presentation_manager.is_presenting and any(user_lower.strip() == w for w in ["next", "continue", "move on", "proceed", "go ahead", "next one", "more", "next slide"])
     )
-    if is_next_cmd and presentation_manager.is_presenting:
+    if is_next_cmd and presentation_manager.is_presenting and not is_conv_about_ppt:
         spoken_reply, audio_file = presentation_manager.next_slide(query_llm_fn=query_myra_llm)
         try:
             with get_db() as conn:
@@ -1267,7 +1358,7 @@ def chat(request: ChatRequest):
         }
 
     # 3. Previous slide
-    if presentation_manager.is_presenting and any(k in user_lower for k in ["previous slide", "prev slide", "go back", "last slide", "pichla slide"]):
+    if presentation_manager.is_presenting and not is_conv_about_ppt and any(k in user_lower for k in ["previous slide", "prev slide", "go back", "last slide", "pichla slide"]):
         spoken_reply, audio_file = presentation_manager.prev_slide(query_llm_fn=query_myra_llm)
         try:
             with get_db() as conn:
@@ -1285,21 +1376,13 @@ def chat(request: ChatRequest):
             "status": presentation_manager.get_status()
         }
 
-    # 4. Start / Restart presentation (Flexible matching for PPT, PPD, PBT, PDF, Slides, Project)
+    # 4. Start / Restart presentation (Strict imperative command validation)
     is_restart_cmd = any(k in user_lower for k in [
         "restart", "start over", "start from beginning", "from the top",
         "pehla slide", "first slide", "start again", "from the start",
         "whole ppt", "the whole ppt", "all slides"
     ])
-    is_start_ppt = any(k in user_lower for k in [
-        "start presentation", "present the ppt", "present the ppd", "present the pbt", "present our project",
-        "present the slides", "start presenting", "present ppt", "present ppd", "present pbt", "present pdf",
-        "present the pdf", "present project", "presentation start", "shuru karo presentation", "present the whole ppt",
-        "present whole ppt", "present all slides"
-    ]) or (
-        any(v in user_lower for v in ["present", "start", "show", "open", "run", "explain"]) and
-        any(n in user_lower for n in ["ppt", "ppd", "pbt", "pdf", "presentation", "slides", "deck", "project"])
-    )
+    is_start_ppt = is_start_presentation_command(user_message)
     if is_start_ppt:
         # If already presenting and user didn't ask to restart, advance/continue instead of repeating Slide 1
         if presentation_manager.is_presenting and not is_restart_cmd:
