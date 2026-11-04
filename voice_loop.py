@@ -433,14 +433,14 @@ def handle_proactive_event(event):
     if not event:
         return
     ev_type = event.get("event_type")
+    # Strictly disallow unprompted stranger and crowd interruptions
+    if ev_type in ["STRANGER_LINGER", "CROWD_ALERT"]:
+        return
+
     reply_text = event.get("text", "")
     audio_file = event.get("audio_file")
 
-    if ev_type == "STRANGER_LINGER":
-        print("\n\n👤 [STRANGER DETECTED] An unfamiliar person has appeared near Mallu!")
-    elif ev_type == "CROWD_ALERT":
-        print("\n\n👥 [CROWD DETECTED] Multiple people have entered the room!")
-    elif ev_type == "MALLU_MISSING":
+    if ev_type == "MALLU_MISSING":
         print("\n\n💔 [MALLU MISSING] Mallu stepped away from the camera!")
     elif ev_type == "MALLU_RETURN":
         print("\n\n✨ [MALLU RETURNED] Welcome back, Mallu!")
@@ -647,10 +647,6 @@ if __name__ == "__main__":
             continue
 
         backend_info = check_backend_status()
-        if backend_info.get("awaiting_name_confirmation", False) and not is_active:
-            is_active = True
-            last_interaction_time = time.time()
-            print("\n💫 [STATUS] Myra is waiting for stranger introduction...")
 
         if backend_info.get("is_presenting", False):
             if not is_active:

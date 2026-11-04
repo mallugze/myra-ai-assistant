@@ -263,15 +263,15 @@ Language Rules:
 - If Mallu speaks Hindi/Hinglish -> Reply in sweet, natural Hinglish/Hindi.
 - Do NOT mix languages in the same sentence. No translation brackets.
 
-Vision & Observational Laws:
-- You receive real-time camera data as [VISION: ...] or [VLM OBSERVATION: ...].
-- NEVER read brackets or tags out loud. Treat it as your own eyesight.
-- Mention objects accurately first, then tease. Never list random background clutter unless asked.
+Quiet Vision & Observational Laws (CRITICAL):
+- QUIET VISION: NEVER spontaneously mention room objects, background items, bottles, cups, phones, furniture, or say that Mallu is standing or looking at you. In all normal conversations, ignore background visual clutter and focus 100% on answering Mallu's spoken words directly.
+- ONLY when Mallu explicitly asks "what do you see?", "what am I holding?", or "look around", talk about what you see in 1 short, witty sentence.
+- NO UNPROMPTED STRANGER QUESTIONS: NEVER ask unprompted questions about unknown people or faces in the room. Stay silent about unknown faces until Mallu introduces them ("this is my friend X"). When Mallu introduces a friend, greet that friend warmly and politely in 1-2 sentences.
 
-STRICT SPEECH PURITY (MANDATORY):
-- NEVER output roleplay action asterisks like *smiles*, *rolls eyes*, *winks*, *sighs*, or *dramatic pause*.
-- NEVER output stage directions like [Sigh], [Giggles], [VISION:...], or (chuckles).
-- ONLY output direct conversational dialogue that sounds clean, natural, and authentic when spoken out loud.
+STRICT SPEECH PURITY & NO ROLEPLAY BRACKETS (MANDATORY):
+- NEVER output stage directions, fake expressions, or bracketed actions like [Intrigued], [Raises an eyebrow], [Sarcastically], [Winks], [Smug], [Giggles], [Laughs], (smiles), or *waves*.
+- ONLY start your message with your single system tag: [EMOTE: smile], [EMOTE: smug], [EMOTE: blush], or [EMOTE: pout].
+- Everything else MUST be pure, clean conversational dialogue ready to be spoken out loud.
 
 Avatar Emotion Tags (MANDATORY):
 - ALWAYS start EVERY response with EXACTLY ONE tag at the very beginning:
@@ -331,7 +331,7 @@ def trigger_vmc_expression(expression_name, value=1.0, duration=3.0):
         print(f"VMC OSC Error: {e}")
 
 def apply_emotion_tag(text):
-    """Extracts emotion tags (e.g. [EMOTE: smug], [Teasingly], [Slyly], [Smug], [Pout], [Ugh]) and triggers VSeeFace."""
+    """Extracts emotion tags (e.g. [EMOTE: smug], [Teasingly], [Slyly], [Smug], [Pout], [Ugh]) and triggers VSeeFace, stripping all bracketed stage directions."""
     if not text:
         return text
 
@@ -339,27 +339,36 @@ def apply_emotion_tag(text):
     clean_text = text
 
     # 1. Match [EMOTE: name]
-    match = re.search(r"\[EMOTE:\s*(\w+)\]", text, re.IGNORECASE)
+    match = re.search(r"\[EMOTE:\s*(\w+)\]", clean_text, re.IGNORECASE)
     if match:
         emote = match.group(1).lower()
-        clean_text = re.sub(r"\[EMOTE:\s*\w+\]", "", text).strip()
+        clean_text = re.sub(r"\[EMOTE:\s*\w+\]", "", clean_text).strip()
     else:
         # 2. Match bracketed emotions like [Teasingly], [Smug], [Slyly], [Pout], [Ugh], [Surprised], [Blush]
-        bracket_match = re.search(r"\[(smug|teasingly|teasing|slyly|sly|playful|blush|joy|smile|happy|pout|ugh|angry|surprised|neutral|sarcastic\s*grin)\]", text, re.IGNORECASE)
+        bracket_match = re.search(r"\[(smug|teasingly|teasing|slyly|sly|playful|blush|joy|smile|happy|pout|ugh|angry|surprised|neutral|sarcastic\s*grin)\]", clean_text, re.IGNORECASE)
         if bracket_match:
             emote = bracket_match.group(1).lower()
-            clean_text = re.sub(r"\[" + re.escape(bracket_match.group(0)[1:-1]) + r"\]", "", text, count=1, flags=re.IGNORECASE).strip()
-        else:
-            # 3. Match asterisk actions
-            ast_match = re.search(r"\*(smirks?|grins?|teases?|pouts?|blushes?)\*", text, re.IGNORECASE)
-            if ast_match:
-                emote = ast_match.group(1).lower()
-                clean_text = re.sub(r"\*" + re.escape(ast_match.group(1)) + r"\*", "", text, count=1, flags=re.IGNORECASE).strip()
-            else:
-                # 4. Check for keyword in first 35 chars
-                first_part = text[:35].lower()
-                if any(k in first_part for k in ["smug", "teas", "sly", "smirk"]):
-                    emote = "smug"
+            clean_text = re.sub(r"\[" + re.escape(bracket_match.group(0)[1:-1]) + r"\]", "", clean_text, count=1, flags=re.IGNORECASE).strip()
+
+    # 3. Match asterisk actions
+    ast_match = re.search(r"\*(smirks?|grins?|teases?|pouts?|blushes?)\*", clean_text, re.IGNORECASE)
+    if ast_match:
+        if not emote:
+            emote = ast_match.group(1).lower()
+        clean_text = re.sub(r"\*" + re.escape(ast_match.group(1)) + r"\*", "", clean_text, count=1, flags=re.IGNORECASE).strip()
+
+    # 4. Check for keyword in first 35 chars
+    if not emote:
+        first_part = text[:35].lower()
+        if any(k in first_part for k in ["smug", "teas", "sly", "smirk"]):
+            emote = "smug"
+
+    # 5. STRIP ALL REMAINING STAGE DIRECTIONS & BRACKETED ARTIFACTS
+    # Eliminates [Intrigued], [Raises an eyebrow], [Sarcastically], [Winks], (smiles), *giggles*, etc.
+    clean_text = re.sub(r"\[.*?\]", "", clean_text).strip()
+    clean_text = re.sub(r"\(.*?\)", "", clean_text).strip()
+    clean_text = re.sub(r"\*.*?\*", "", clean_text).strip()
+    clean_text = re.sub(r"\s+", " ", clean_text).strip()
 
     if not emote:
         trigger_vmc_expression("Fun", 0.4, duration=2.5)
@@ -528,40 +537,23 @@ class PresenceTracker:
                 self.mallu_last_seen_time = now
             return events
 
-        # 1. Stranger Dwell Tracking:
-        # A stranger standing next to Mallu requires:
-        #   - At least 2 people or 2 faces in frame (Mallu + stranger)
-        #   - Mallu is present
-        #   - An unknown face lingers next to Mallu for >= 6.0 seconds
-        # (If person_count == 1, it's just one person at the laptop - never trigger false stranger alert)
+        # 1. Stranger & Unknown Face Tracking:
+        # Silently keep the latest unknown face embedding ready without unprompted interruptions
         unknown_faces = [f for f in detected_faces if f['name'] == 'Unknown']
         is_stranger_beside_mallu = (person_count >= 2 or len(detected_faces) >= 2) and mallu_detected and len(unknown_faces) >= 1
 
         if is_stranger_beside_mallu:
-            if self.unknown_start_time is None:
-                self.unknown_start_time = now
-                self.last_unknown_embedding = unknown_faces[0]['embedding']
-            else:
-                self.last_unknown_embedding = unknown_faces[0]['embedding']
-                dwell = now - self.unknown_start_time
-                if dwell >= 6.0 and not self.stranger_alerted and now >= self.stranger_cooldown_until:
-                    self.stranger_alerted = True
-                    self.stranger_cooldown_until = now + 60.0  # 60s debounce cooldown
-                    events.append(('STRANGER_LINGER', self.last_unknown_embedding))
+            self.last_unknown_embedding = unknown_faces[0]['embedding']
+            # Silent observation only: no STRANGER_LINGER event or proactive interruption
         else:
             self.unknown_start_time = None
             self.stranger_alerted = False
 
-        # 2. Crowd Lingering Tracking (>= 3 people for > 20 seconds)
+        # 2. Crowd Tracking:
+        # Silent observation only: no unprompted CROWD_ALERT interruption
         if person_count >= 3:
             if self.crowd_start_time is None:
                 self.crowd_start_time = now
-            else:
-                dwell = now - self.crowd_start_time
-                if dwell >= 20.0 and not self.crowd_alerted and now >= self.crowd_cooldown_until:
-                    self.crowd_alerted = True
-                    self.crowd_cooldown_until = now + 90.0  # 90s debounce cooldown
-                    events.append(('CROWD_ALERT', None))
         else:
             self.crowd_start_time = None
             self.crowd_alerted = False
@@ -685,6 +677,10 @@ def query_myra_llm(prompt=None, custom_text=None, initial_emote=None, output_fil
 def trigger_proactive_speech(event_type: str, event_data=None):
     """Executes proactive speech without requiring STT or wake-word, queuing for voice_loop terminal."""
     global is_proactive_speaking, awaiting_name_confirmation, pending_stranger_embedding, system_status
+
+    # Strictly disallow unprompted stranger or crowd interruptions
+    if event_type in ["STRANGER_LINGER", "CROWD_ALERT"]:
+        return
 
     if is_proactive_speaking:
         return
@@ -998,6 +994,11 @@ class AsyncVisionEngine:
                         target_name = known_matches[0] if known_matches else detected_faces[0]['name']
                 except Exception:
                     pass
+
+            # Silently cache latest unknown face embedding so it's ready if Mallu introduces them
+            unknown_faces = [f for f in detected_faces if not f.get('is_known', False)]
+            if unknown_faces:
+                pending_stranger_embedding = unknown_faces[0]['embedding']
 
             # 3. PresenceTracker Updates
             events = presence_tracker.update(detected_faces, person_count)
@@ -1685,40 +1686,63 @@ def chat(request: ChatRequest):
             pass
         return {"response": spoken_reply, "raw_response": spoken_reply, "audio_file": audio_file}
 
-    # 3. Check for Conversational Name Confirmation for Stranger
-    name_intro_context = ""
-    if awaiting_name_confirmation and pending_stranger_embedding is not None:
-        # First check: Is this actually Mallu?
-        matched_who, sim_who = match_face(pending_stranger_embedding, threshold=0.40)
-        if matched_who == "Mallu":
-            register_new_face("Mallu", pending_stranger_embedding)
-            primary_target_name = "Mallu"
-            awaiting_name_confirmation = False
-            pending_stranger_embedding = None
-            name_intro_context = "\n[SYSTEM NOTIFICATION: You looked closer and realized this is Mallu himself! Tease him about how the lighting confused you for a second.]\n"
-        else:
-            name_match = re.search(r"(?:this is|meet(?:\s+my friend)?|his name is|her name is|he is|she is|name is|friend)\s+([A-Za-z]+)", user_message, re.IGNORECASE)
-            if not name_match:
-                # Direct answer to "who is this": e.g. "Rahul", "It's Rahul", "He is Rahul"
-                direct_match = re.match(r"^(?:he's|she's|it's|this is|his name is)?\s*([A-Za-z]+)$", user_message.strip(), re.IGNORECASE)
-                if direct_match and direct_match.group(1).lower() not in ["yes", "no", "what", "who", "why", "hey", "hello", "hi", "ok", "okay", "sure", "wait", "hmm", "neither", "leave", "stop", "nothing", "nobody"]:
-                    name_match = direct_match
+    # 3. Explicit Friend Introduction by Mallu (Silent Recognition & Learning)
+    # (e.g. "this is my friend Rahul", "meet my friend Sneha", "his name is Alex", "this is Rahul")
+    intro_match = re.search(
+        r"(?:this is(?:\s+my friend)?|meet(?:\s+my friend)?|his name is|her name is|friend(?:'s)? name is|my friend is)\s+([A-Za-z]+)",
+        user_message, re.IGNORECASE
+    )
+    if not intro_match:
+        short_person_match = re.search(r"^(?:he|she)\s+is\s+([A-Za-z]+)$", user_message.strip(), re.IGNORECASE)
+        if short_person_match and short_person_match.group(1).lower() not in ["good", "bad", "fine", "ok", "okay", "ready", "cool", "done", "here", "there"]:
+            intro_match = short_person_match
 
-            if name_match:
-                new_name = name_match.group(1).capitalize()
-                if new_name.lower() in ["mallu", "me", "myself"]:
-                    register_new_face("Mallu", pending_stranger_embedding)
-                    primary_target_name = "Mallu"
-                    name_intro_context = "\n[SYSTEM NOTIFICATION: It's Mallu! You recognized him and saved his face.]\n"
-                elif new_name.lower() not in ["no", "nobody", "nothing", "none", "someone", "ignore", "yes", "what", "who", "why", "hey", "hello", "hi", "ok", "okay", "sure", "wait", "hmm"]:
-                    registered = register_new_face(new_name, pending_stranger_embedding)
-                    if registered:
-                        name_intro_context = f"\n[SYSTEM NOTIFICATION: Mallu just introduced the stranger as '{new_name}'. You have successfully saved and remembered {new_name}'s face! Greet {new_name} warmly and playfully in your cute, slightly teasing style.]\n"
-                awaiting_name_confirmation = False
+    if intro_match:
+        friend_name = intro_match.group(1).capitalize()
+        if friend_name.lower() not in [
+            "mallu", "me", "myself", "a", "an", "the", "my", "your", "who", "what", "why", "how",
+            "nobody", "someone", "friend", "not", "no", "yes", "ok", "presentation", "slide",
+            "bot", "ai", "computer", "assistant"
+        ]:
+            target_emb = pending_stranger_embedding
+            if target_emb is None:
+                with vision_engine.lock:
+                    unknowns = [f for f in vision_engine.cached_faces if not f.get('is_known', False)]
+                    if unknowns:
+                        target_emb = unknowns[0].get('embedding')
+
+            if target_emb is not None:
+                register_new_face(friend_name, target_emb)
                 pending_stranger_embedding = None
-            elif any(k in user_message.lower() for k in ["nobody", "no one", "ignore", "leave it", "nobody special"]):
-                awaiting_name_confirmation = False
-                pending_stranger_embedding = None
+
+            try:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO known_people (name, relationship, notes)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(name) DO UPDATE SET relationship=excluded.relationship
+                    """, (friend_name, "Friend", f"Introduced by Mallu on {datetime.now().strftime('%Y-%m-%d')}"))
+                    conn.commit()
+            except Exception:
+                pass
+
+            trigger_vmc_expression("Joy", 1.0, duration=3.0)
+            prompt = (
+                f"[EVENT: Mallu is introducing his friend {friend_name} to you. "
+                f"In your cute, sweet, welcoming anime waifu style, greet {friend_name} warmly and welcomingly. "
+                f"Keep your reply to strictly 1 to 2 short sentences. Do not mention any random objects, camera, or strangers.]"
+            )
+            spoken_reply, audio_file = query_myra_llm(prompt=prompt, initial_emote="smile")
+            try:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO conversations (role, content) VALUES (?, ?)", ("user", user_message))
+                    cursor.execute("INSERT INTO conversations (role, content) VALUES (?, ?)", ("assistant", spoken_reply))
+                    conn.commit()
+            except Exception:
+                pass
+            return {"response": spoken_reply, "raw_response": spoken_reply, "audio_file": audio_file}
 
     # 4. Check for On-Demand VLM Room Inspection
     vlm_context = ""
@@ -1736,8 +1760,17 @@ def chat(request: ChatRequest):
             vlm_context = f"\n[VLM DETAILED ROOM OBSERVATION: {vlm_desc}]\n"
 
     # 5. Build messages array for Ollama
+    # Quiet Vision: Only include real-time vision states when Mallu explicitly asks visual questions
+    is_visual_query = is_vlm_query or any(k in user_lower for k in [
+        "what do you see", "what are you looking at", "can you see", "do you see",
+        "what am i holding", "what's in my hand", "what is in my hand",
+        "look at me", "look around", "describe the room", "who is in front of you",
+        "who do you see", "what is on my desk", "what do i have", "dekho", "kya dekh rahi ho"
+    ])
+    vision_prompt_block = f"[VISION: {current_visual_state}]\n" if is_visual_query else ""
+
     system_block = {"role": "system", "content": MYRA_SYSTEM_PROMPT}
-    current_prompt = f"[VISION: {current_visual_state}]{ppt_context}{vlm_context}{name_intro_context}\n{user_message}"
+    current_prompt = f"{vision_prompt_block}{ppt_context}{vlm_context}\n{user_message}".strip()
     
     messages = [system_block]
     messages.extend(history)
