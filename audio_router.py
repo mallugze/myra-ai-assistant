@@ -2,18 +2,28 @@
 Audio Device Router for Myra AI Assistant
 Intelligently discovers connected headphones, headsets, and microphones.
 Prioritizes external/headphone devices over laptop built-in microphones/speakers,
-and manages dual-channel playback (Headphones + VB-Cable for VSeeFace lip-sync).
+and manages dual-channel playback (Headphones or Speakers + VB-Cable for VSeeFace lip-sync).
 """
 import os
+import re
 import time
 import threading
 import sounddevice as sd
 import soundfile as sf
 import numpy as np
+import winsound
 
 HEADPHONE_KEYWORDS = [
-    'headset', 'headphone', 'rockerz', 'earphone',
-    'bluetooth', 'wireless', 'usb', 'airpod', 'buds', 'mic'
+    'headphone', 'headset', 'rockerz', 'earphone',
+    'bluetooth', 'wireless', 'airpod', 'earbuds', 'buds'
+]
+
+HEADSET_MIC_KEYWORDS = [
+    'headset', 'rockerz', 'airpod', 'buds', 'earphone', 'bluetooth', 'wireless'
+]
+
+BUILTIN_MIC_KEYWORDS = [
+    'array', 'smart sound', 'intel', 'built-in', 'internal'
 ]
 
 VIRTUAL_KEYWORDS = [
@@ -23,9 +33,56 @@ VIRTUAL_KEYWORDS = [
 def is_virtual_device(name: str) -> bool:
     return any(v in name.lower() for v in VIRTUAL_KEYWORDS)
 
-def is_external_or_headphone(name: str) -> bool:
+def is_unassigned_jack(name: str) -> bool:
+    """Detects unpopulated/ghost Realtek hardware jack endpoints (e.g. 'Headphones ()')."""
+    return bool(re.search(r'\(\s*\)', name)) or '2nd output' in name.lower()
+
+def is_valid_hostapi(dev: dict) -> bool:
+    """
+    PortAudio Windows WDM-KS exposes raw kernel pins that fail with -9999 ('Blocking API not supported').
+    We strictly filter them out and use Windows MME, DirectSound, or WASAPI.
+    """
+    try:
+        api_name = sd.query_hostapis(dev['hostapi'])['name'].lower()
+        return 'wdm-ks' not in api_name
+    except Exception:
+        return True
+
+def can_open_output(dev_idx: int, fs: int = 48000, channels: int = 2) -> bool:
+    """Tests if the output device can genuinely be opened by sounddevice without error."""
+    try:
+        sd.check_output_settings(device=dev_idx, samplerate=fs, channels=channels)
+        s = sd.OutputStream(device=dev_idx, samplerate=fs, channels=channels)
+        s.close()
+        return True
+    except Exception:
+        return False
+
+def can_open_input(dev_idx: int, fs: int = 16000, channels: int = 1) -> bool:
+    """Tests if the input device can genuinely be opened by sounddevice without error."""
+    try:
+        sd.check_input_settings(device=dev_idx, samplerate=fs, channels=channels)
+        s = sd.InputStream(device=dev_idx, samplerate=fs, channels=channels)
+        s.close()
+        return True
+    except Exception:
+        return False
+
+def is_headphone_device(name: str) -> bool:
+    if is_virtual_device(name) or is_unassigned_jack(name):
+        return False
     name_lower = name.lower()
-    return any(k in name_lower for k in HEADPHONE_KEYWORDS) and not is_virtual_device(name)
+    if 'speaker' in name_lower and not any(k in name_lower for k in ['headphone', 'headset', 'earphone']):
+        return False
+    return any(k in name_lower for k in HEADPHONE_KEYWORDS)
+
+def is_headset_mic(name: str) -> bool:
+    if is_virtual_device(name) or is_unassigned_jack(name):
+        return False
+    name_lower = name.lower()
+    if any(k in name_lower for k in BUILTIN_MIC_KEYWORDS):
+        return False
+    return any(k in name_lower for k in HEADSET_MIC_KEYWORDS)
 
 def detect_audio_devices(verbose: bool = True) -> dict:
     """
@@ -64,69 +121,79 @@ def detect_audio_devices(verbose: bool = True) -> dict:
 
     best_in_idx = None
     best_in_name = None
-    is_headphone_mic = False
+    is_headphone_mic_active = False
 
     vb_cable_idx = None
 
-    # 1. Detect VB-Cable for avatar lip-sync
+    # 1. Detect VB-Cable for avatar lip-sync (prefer standard 'cable input' over 16ch)
     for i, d in enumerate(devs):
-        if d['max_output_channels'] > 0:
-            if 'cable input' in d['name'].lower() and vb_cable_idx is None:
+        if d['max_output_channels'] > 0 and is_valid_hostapi(d):
+            nl = d['name'].lower()
+            if 'cable input' in nl and can_open_output(i):
                 vb_cable_idx = i
                 break
+    if vb_cable_idx is None:
+        for i, d in enumerate(devs):
+            if d['max_output_channels'] > 0 and is_valid_hostapi(d):
+                nl = d['name'].lower()
+                if ('cable in' in nl or 'virtual cable' in nl) and can_open_output(i):
+                    vb_cable_idx = i
+                    break
 
-    # 2. Find Output: Priority 1 = Headphones / Headset
+    # 2. Find Output: Priority 1 = Real Connected Headphones / Headset
     for i, d in enumerate(devs):
-        if d['max_output_channels'] > 0:
-            if is_external_or_headphone(d['name']) and best_out_idx is None:
+        if d['max_output_channels'] > 0 and is_valid_hostapi(d):
+            if is_headphone_device(d['name']) and can_open_output(i):
                 best_out_idx = i
                 best_out_name = d['name']
                 is_headphones = True
                 break
 
-    # Output: Priority 2 = Realtek / physical speakers
+    # Output: Priority 2 = Realtek / Physical Laptop Speakers
     if best_out_idx is None:
         for i, d in enumerate(devs):
-            if d['max_output_channels'] > 0 and not is_virtual_device(d['name']):
-                best_out_idx = i
-                best_out_name = d['name']
-                is_headphones = False
-                break
+            if d['max_output_channels'] > 0 and is_valid_hostapi(d) and not is_virtual_device(d['name']) and not is_unassigned_jack(d['name']):
+                if can_open_output(i):
+                    best_out_idx = i
+                    best_out_name = d['name']
+                    is_headphones = False
+                    break
 
     # Output: Priority 3 = System Default Output
     if best_out_idx is None:
         best_out_idx = default_out
         best_out_name = devs[default_out]['name'] if default_out is not None and default_out >= 0 else 'Default Output'
-        is_headphones = is_external_or_headphone(best_out_name)
+        is_headphones = is_headphone_device(best_out_name)
 
     # 3. Find Input: Priority 1 = Headset / External Mic
     for i, d in enumerate(devs):
-        if d['max_input_channels'] > 0:
-            if is_external_or_headphone(d['name']) and best_in_idx is None:
+        if d['max_input_channels'] > 0 and is_valid_hostapi(d):
+            if is_headset_mic(d['name']) and can_open_input(i):
                 best_in_idx = i
                 best_in_name = d['name']
-                is_headphone_mic = True
+                is_headphone_mic_active = True
                 break
 
     # Input: Priority 2 = Physical Built-in Microphone Array
     if best_in_idx is None:
         for i, d in enumerate(devs):
-            if d['max_input_channels'] > 0 and not is_virtual_device(d['name']):
-                best_in_idx = i
-                best_in_name = d['name']
-                is_headphone_mic = False
-                break
+            if d['max_input_channels'] > 0 and is_valid_hostapi(d) and not is_virtual_device(d['name']) and not is_unassigned_jack(d['name']):
+                if can_open_input(i):
+                    best_in_idx = i
+                    best_in_name = d['name']
+                    is_headphone_mic_active = False
+                    break
 
     # Input: Priority 3 = System Default Input
     if best_in_idx is None:
         best_in_idx = default_in
         best_in_name = devs[default_in]['name'] if default_in is not None and default_in >= 0 else 'Default Input'
-        is_headphone_mic = is_external_or_headphone(best_in_name)
+        is_headphone_mic_active = is_headset_mic(best_in_name)
 
     config = {
         'input_device': best_in_idx,
         'input_name': best_in_name,
-        'is_headphone_mic': is_headphone_mic,
+        'is_headphone_mic': is_headphone_mic_active,
         'output_device': best_out_idx,
         'output_name': best_out_name,
         'is_headphones': is_headphones,
@@ -137,14 +204,16 @@ def detect_audio_devices(verbose: bool = True) -> dict:
         print("\n+==================================================================+")
         print("|           [AUDIO] MYRA HARDWARE AUDIO ROUTER READY               |")
         print("+==================================================================+")
-        in_tag = "  [HEADSET MIC ACTIVE]" if is_headphone_mic else "  [LAPTOP BUILT-IN MIC]"
+        in_tag = "  [HEADSET MIC ACTIVE]" if is_headphone_mic_active else "  [LAPTOP BUILT-IN MIC]"
         out_tag = "  [HEADPHONES ONLY]" if is_headphones else "  [LAPTOP SPEAKERS ACTIVE]"
         print(f"  INPUT MIC  : [{best_in_idx}] {best_in_name}{in_tag}")
         print(f"  OUTPUT     : [{best_out_idx}] {best_out_name}{out_tag}")
         if is_headphones:
             print("  POLICY     : Headphones connected -> Muting laptop speakers completely.")
-        elif vb_cable_idx is not None:
-            print(f"  VSEEFACE   : [{vb_cable_idx}] {devs[vb_cable_idx]['name']}  [LIP-SYNC ACTIVE]")
+        else:
+            print("  POLICY     : Headphones not detected -> Outputting speech via laptop speakers.")
+            if vb_cable_idx is not None:
+                print(f"  VSEEFACE   : [{vb_cable_idx}] {devs[vb_cable_idx]['name']}  [LIP-SYNC ACTIVE]")
         print("+==================================================================+\n")
 
     return config
@@ -155,8 +224,8 @@ def play_audio_dual(file_path: str, audio_config: dict = None):
     1. First check if headphones are connected.
     2. If YES (headphones connected): Speak in HEADPHONES ONLY.
        (Never route audio to laptop speakers or secondary virtual streams that bleed into laptop speakers).
-    3. If NO (headphones not connected): Speak using LAPTOP SPEAKERS.
-    Uses dedicated stream handles and hardware buffer drainage so words are never cut off.
+    3. If NO (headphones not connected): Speak using LAPTOP SPEAKERS + VB-Cable for VSeeFace.
+    Includes multi-layer fallback to default audio device and winsound so words are never lost.
     """
     if not file_path or not os.path.exists(file_path):
         return
@@ -167,11 +236,14 @@ def play_audio_dual(file_path: str, audio_config: dict = None):
     out_dev = audio_config.get('output_device')
     out_name = audio_config.get('output_name', 'Default Device')
     is_hp = audio_config.get('is_headphones', False)
+    vb_dev = audio_config.get('vb_cable_device')
 
     if is_hp:
-        print(f"🎧 [AUDIO] Headphones Connected: Outputting speech exclusively to '{out_name}'.")
+        print(f"[AUDIO] Headphones Connected: Outputting speech exclusively to '{out_name}'.")
     else:
-        print(f"🔊 [AUDIO] Headphones Not Detected: Outputting speech to Laptop Speakers '{out_name}'.")
+        print(f"[AUDIO] Headphones Not Detected: Outputting speech to Laptop Speakers '{out_name}'.")
+
+    played_successfully = False
 
     try:
         data, fs = sf.read(file_path, dtype='float32')
@@ -184,7 +256,8 @@ def play_audio_dual(file_path: str, audio_config: dict = None):
             tail_silence = np.zeros((int(fs * 0.40), data.shape[1]), dtype=np.float32)
             data = np.concatenate([data, tail_silence], axis=0)
 
-        # Single dedicated stream: Headphones only if connected, otherwise Laptop Speakers
+        # Single dedicated stream: Headphones if connected, otherwise Laptop Speakers
+        # (Never play simultaneously to VB-Cable and Speakers, as that causes double voice / echo)
         try:
             s_out = sd.OutputStream(device=out_dev, channels=1 if data.ndim == 1 else data.shape[1], samplerate=fs)
             s_out.start()
@@ -194,12 +267,26 @@ def play_audio_dual(file_path: str, audio_config: dict = None):
                 s_out.write(chunk)
             s_out.stop()
             s_out.close()
-            # Safety sleep for physical Bluetooth headphone / speaker driver flush
+            played_successfully = True
             time.sleep(0.25)
-        except Exception as se:
-            sd.play(data, fs, device=out_dev)
-            sd.wait()
-            time.sleep(0.25)
+        except Exception as e_out:
+            print(f"--- [AUDIO ROUTER] Primary stream notice: {e_out} ---")
+            try:
+                sd.play(data, fs, device=out_dev)
+                sd.wait()
+                played_successfully = True
+                time.sleep(0.25)
+            except Exception:
+                pass
 
     except Exception as e:
-        print(f"--- [AUDIO ROUTER] Playback notice: {e} ---")
+        print(f"--- [AUDIO ROUTER] SoundDevice playback notice: {e} ---")
+
+    # Final guaranteed fallback: Windows Multimedia Subsystem (winsound)
+    if not played_successfully:
+        try:
+            print("--- [AUDIO ROUTER] Triggering Windows Multimedia fallback (winsound)... ---")
+            winsound.PlaySound(file_path, winsound.SND_FILENAME)
+        except Exception as we:
+            print(f"--- [AUDIO ROUTER] Winsound fallback notice: {we} ---")
+

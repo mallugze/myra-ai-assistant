@@ -274,28 +274,23 @@ class PresentationManager:
         """
         deck_url = self.find_latest_google_slides_url() or self.MYRA_GOOGLE_SLIDES_DECK_URL
 
-        # 1. Primary: Launch exact Google Slides deck in Chrome App with --start-fullscreen
+        # 1. Primary: Launch exact Google Slides deck in Chrome App mode (isolated from normal browsing)
         if os.path.exists(self.CHROME_EXE):
             try:
-                print(f"--- [SLIDES AUTOMATION] Opening Exact Google Slides Deck in Fullscreen: {deck_url} ---")
+                print(f"--- [SLIDES AUTOMATION] Opening Exact Google Slides Deck: {deck_url} ---")
                 import subprocess
                 cmd = [
                     self.CHROME_EXE,
-                    "--profile-directory=Default",
-                    "--start-fullscreen",
                     f"--app={deck_url}"
                 ]
                 subprocess.Popen(cmd)
-                time.sleep(3.0)
+                time.sleep(2.5)
                 self.focus_presentation_window()
                 try:
                     import pyautogui
                     # Click center of screen to guarantee web canvas captures keyboard events
                     w, h = pyautogui.size()
                     pyautogui.click(w // 2, h // 2)
-                    time.sleep(0.2)
-                    # Send F11 to ensure true hardware fullscreen without titlebar
-                    pyautogui.press('f11')
                     time.sleep(0.2)
                     # Reset to slide 1
                     self._send_slide_home()

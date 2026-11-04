@@ -1241,8 +1241,12 @@ def chat(request: ChatRequest):
         return {"response": spoken_reply, "raw_response": spoken_reply, "audio_file": audio_file, "is_presenting": False}
 
     # 2. Next slide / Continue presentation
-    is_next_cmd = any(k in user_lower for k in ["next slide", "next page", "continue presentation", "agla slide"]) or (
-        presentation_manager.is_presenting and any(user_lower.strip() == w for w in ["next", "continue", "move on", "proceed", "go ahead", "next one"])
+    is_next_cmd = any(k in user_lower for k in [
+        "next slide", "next page", "continue presentation", "agla slide",
+        "next one", "move on", "proceed", "go ahead", "present the rest",
+        "baki ka presentation"
+    ]) or (
+        presentation_manager.is_presenting and any(user_lower.strip() == w for w in ["next", "continue", "move on", "proceed", "go ahead", "next one", "more", "next slide"])
     )
     if is_next_cmd and presentation_manager.is_presenting:
         spoken_reply, audio_file = presentation_manager.next_slide(query_llm_fn=query_myra_llm)
@@ -1254,7 +1258,13 @@ def chat(request: ChatRequest):
                 conn.commit()
         except Exception:
             pass
-        return {"response": spoken_reply, "raw_response": spoken_reply, "audio_file": audio_file, "is_presenting": presentation_manager.is_presenting}
+        return {
+            "response": spoken_reply,
+            "raw_response": spoken_reply,
+            "audio_file": audio_file,
+            "is_presenting": presentation_manager.is_presenting,
+            "status": presentation_manager.get_status()
+        }
 
     # 3. Previous slide
     if presentation_manager.is_presenting and any(k in user_lower for k in ["previous slide", "prev slide", "go back", "last slide", "pichla slide"]):
@@ -1267,19 +1277,36 @@ def chat(request: ChatRequest):
                 conn.commit()
         except Exception:
             pass
-        return {"response": spoken_reply, "raw_response": spoken_reply, "audio_file": audio_file, "is_presenting": True}
+        return {
+            "response": spoken_reply,
+            "raw_response": spoken_reply,
+            "audio_file": audio_file,
+            "is_presenting": True,
+            "status": presentation_manager.get_status()
+        }
 
-    # 4. Start presentation (Flexible matching for PPT, PPD, PBT, PDF, Slides, Project)
+    # 4. Start / Restart presentation (Flexible matching for PPT, PPD, PBT, PDF, Slides, Project)
+    is_restart_cmd = any(k in user_lower for k in [
+        "restart", "start over", "start from beginning", "from the top",
+        "pehla slide", "first slide", "start again", "from the start",
+        "whole ppt", "the whole ppt", "all slides"
+    ])
     is_start_ppt = any(k in user_lower for k in [
         "start presentation", "present the ppt", "present the ppd", "present the pbt", "present our project",
         "present the slides", "start presenting", "present ppt", "present ppd", "present pbt", "present pdf",
-        "present the pdf", "present project", "presentation start", "shuru karo presentation"
+        "present the pdf", "present project", "presentation start", "shuru karo presentation", "present the whole ppt",
+        "present whole ppt", "present all slides"
     ]) or (
         any(v in user_lower for v in ["present", "start", "show", "open", "run", "explain"]) and
         any(n in user_lower for n in ["ppt", "ppd", "pbt", "pdf", "presentation", "slides", "deck", "project"])
     )
     if is_start_ppt:
-        spoken_reply, audio_file = presentation_manager.start_presentation(query_llm_fn=query_myra_llm)
+        # If already presenting and user didn't ask to restart, advance/continue instead of repeating Slide 1
+        if presentation_manager.is_presenting and not is_restart_cmd:
+            spoken_reply, audio_file = presentation_manager.next_slide(query_llm_fn=query_myra_llm)
+        else:
+            spoken_reply, audio_file = presentation_manager.start_presentation(query_llm_fn=query_myra_llm)
+
         try:
             with get_db() as conn:
                 cursor = conn.cursor()
@@ -1288,7 +1315,13 @@ def chat(request: ChatRequest):
                 conn.commit()
         except Exception:
             pass
-        return {"response": spoken_reply, "raw_response": spoken_reply, "audio_file": audio_file, "is_presenting": True}
+        return {
+            "response": spoken_reply,
+            "raw_response": spoken_reply,
+            "audio_file": audio_file,
+            "is_presenting": presentation_manager.is_presenting,
+            "status": presentation_manager.get_status()
+        }
 
     # B. Classroom Mass Introduction Trigger
     if any(k in user_lower for k in ["meet my class", "introduce you to my class", "meet the class", "say hi to my class", "introduce yourself to everyone", "introduce yourself to my class", "meet everyone in class", "meet all of them"]):

@@ -457,6 +457,99 @@ def handle_proactive_event(event):
 _last_status_poll = 0
 _cached_status = {}
 
+def is_auto_presentation_intent(text):
+    """Detects if user asked Myra to deliver the presentation or whole deck."""
+    if not text:
+        return False
+    text_lower = text.lower().strip()
+    clean = re.sub(r'[^\w\s]', '', text_lower)
+
+    triggers = [
+        "present the ppt", "present ppt", "present the whole ppt", "present whole ppt",
+        "start presentation", "start the presentation", "start the ppt", "start ppt",
+        "present our project", "present project", "present the slides", "present slides",
+        "present all slides", "can you present the ppt", "can you present the whole ppt",
+        "can you present", "run the presentation", "run the ppt", "show the presentation",
+        "shuru karo presentation", "presentation start", "present everything"
+    ]
+    for t in triggers:
+        if t in text_lower or t in clean:
+            return True
+
+    words = set(clean.split())
+    actions = {"present", "start", "run", "show", "give", "explain"}
+    targets = {"ppt", "ppd", "pbt", "pdf", "presentation", "slides", "deck", "project"}
+    negations = {"stop", "end", "close", "dont", "next", "prev", "previous", "back"}
+
+    if words.intersection(actions) and words.intersection(targets) and not words.intersection(negations):
+        return True
+
+    return False
+
+def run_voice_auto_presentation(start_slide=1):
+    """
+    Hands-free autonomous presentation loop for voice_loop.
+    Automatically advances through all 8 slides sequentially with natural presenter pauses,
+    speaking each slide's script in Myra's original Silero voice.
+    """
+    global is_active, last_interaction_time
+    print("\n🚀 [AUTO-PRESENTATION] Hands-free presentation activated...")
+    print("💡 Myra will present all 8 slides and advance Google Slides automatically.")
+    print("💡 Press Ctrl+C at any moment to pause.\n")
+
+    try:
+        total_slides = 8
+        curr_slide = start_slide
+        try:
+            status_res = requests.get("http://127.0.0.1:8000/status", timeout=1.0)
+            if status_res.status_code == 200:
+                s_data = status_res.json()
+                total_slides = s_data.get("total_slides", 8)
+                curr_slide = s_data.get("current_slide", start_slide)
+        except Exception:
+            pass
+
+        for next_s in range(curr_slide + 1, total_slides + 1):
+            time.sleep(1.2)  # Natural presenter pause before advancing
+            print(f"\n➡️ [AUTO-ADVANCE] Advancing Google Slides to Slide {next_s} of {total_slides}...")
+
+            try:
+                res = requests.post("http://127.0.0.1:8000/present_ppt", json={"action": "next"}, timeout=60)
+                if res.status_code != 200:
+                    print(f"⚠️ [AUTO-ADVANCE NOTICE] Backend returned status code {res.status_code}")
+                    break
+
+                data = res.json()
+                speech = data.get("response")
+                audio = data.get("audio_file")
+                stat = data.get("status", {})
+
+                if speech:
+                    add_myra_speech_history(speech)
+                    print(f"🎀 [MYRA]: {speech}")
+
+                if audio and os.path.exists(audio):
+                    safe_play(audio)
+
+                last_interaction_time = time.time()
+
+                if not stat.get("is_presenting", True):
+                    break
+
+            except Exception as slide_err:
+                print(f"⚠️ [AUTO-ADVANCE NOTICE] Error presenting Slide {next_s}: {slide_err}")
+                break
+
+        print("\n" + "★" * 65)
+        print(f"🎉 [PRESENTATION COMPLETE] All {total_slides} slides delivered flawlessly!")
+        print("❓ Floor is open for Q&A with Myra!")
+        print("★" * 65 + "\n")
+
+    except KeyboardInterrupt:
+        print("\n⏸️ [AUTO-PRESENTATION] Paused by user. Returning to voice standby.\n")
+    except Exception as e:
+        print(f"\n⚠️ [AUTO-PRESENTATION NOTICE] {e}\n")
+
 def check_backend_status(fast=False):
     """Checks backend status for proactive triggers (throttled to avoid log spam)."""
     global _last_status_poll, _cached_status
@@ -558,6 +651,8 @@ if __name__ == "__main__":
                         print(f"🎀 [MYRA]: {reply}")
                     if reply_audio:
                         safe_play(reply_audio)
+                    if is_auto_presentation_intent(user_text):
+                        run_voice_auto_presentation()
                 else:
                     wake_replies = [
                         "Yes, Mallu? Miss me already?",
@@ -580,5 +675,8 @@ if __name__ == "__main__":
 
         if reply_audio:
             safe_play(reply_audio)
+
+        if is_auto_presentation_intent(user_text):
+            run_voice_auto_presentation()
 
         time.sleep(0.3)
