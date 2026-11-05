@@ -59,11 +59,19 @@ def can_open_output(dev_idx: int, fs: int = 48000, channels: int = 2) -> bool:
         return False
 
 def can_open_input(dev_idx: int, fs: int = 16000, channels: int = 1) -> bool:
-    """Tests if the input device can genuinely be opened by sounddevice without error."""
+    """
+    Tests if the input device can genuinely be opened by sounddevice
+    AND verifies that the hardware stream actually captures non-zero audio samples.
+    Rejects broken/silent drivers (such as Windows DirectSound on Intel SST arrays).
+    """
     try:
         sd.check_input_settings(device=dev_idx, samplerate=fs, channels=channels)
-        s = sd.InputStream(device=dev_idx, samplerate=fs, channels=channels)
-        s.close()
+        with sd.InputStream(device=dev_idx, samplerate=fs, channels=channels, blocksize=512, dtype='float32') as s:
+            data, _ = s.read(512)
+            if np.count_nonzero(data) == 0:
+                data, _ = s.read(512)
+                if np.count_nonzero(data) == 0:
+                    return False
         return True
     except Exception:
         return False
@@ -119,8 +127,8 @@ def detect_audio_devices(verbose: bool = True) -> dict:
             'vb_cable_device': None
         }
 
-    # Host API preference: WASAPI (hostapi 2, native 48kHz float) > DirectSound (1) > MME (0)
-    def _hostapi_priority(dev_idx):
+    # Host API preference for OUTPUT: WASAPI (hostapi 2, native 48kHz float) > DirectSound (1) > MME (0)
+    def _out_hostapi_priority(dev_idx):
         try:
             h = devs[dev_idx]['hostapi']
             if h == 2:
@@ -132,7 +140,21 @@ def detect_audio_devices(verbose: bool = True) -> dict:
         except Exception:
             return 3
 
-    device_indices = sorted(range(len(devs)), key=_hostapi_priority)
+    # Host API preference for INPUT: MME (hostapi 0, Windows kernel mixer resamples to 16kHz) > DirectSound (1) > WASAPI (2)
+    def _in_hostapi_priority(dev_idx):
+        try:
+            h = devs[dev_idx]['hostapi']
+            if h == 0:
+                return 0
+            elif h == 1:
+                return 1
+            else:
+                return 2
+        except Exception:
+            return 3
+
+    out_device_indices = sorted(range(len(devs)), key=_out_hostapi_priority)
+    in_device_indices = sorted(range(len(devs)), key=_in_hostapi_priority)
 
     best_out_idx = None
     best_out_name = None
@@ -145,7 +167,7 @@ def detect_audio_devices(verbose: bool = True) -> dict:
     vb_cable_idx = None
 
     # 1. Detect VB-Cable for avatar lip-sync (prioritizing WASAPI)
-    for i in device_indices:
+    for i in out_device_indices:
         d = devs[i]
         if d['max_output_channels'] > 0 and is_valid_hostapi(d):
             nl = d['name'].lower()
@@ -153,7 +175,7 @@ def detect_audio_devices(verbose: bool = True) -> dict:
                 vb_cable_idx = i
                 break
     if vb_cable_idx is None:
-        for i in device_indices:
+        for i in out_device_indices:
             d = devs[i]
             if d['max_output_channels'] > 0 and is_valid_hostapi(d):
                 nl = d['name'].lower()
@@ -162,7 +184,7 @@ def detect_audio_devices(verbose: bool = True) -> dict:
                     break
 
     # 2. Find Output: Priority 1 = Real Connected Headphones / Headset
-    for i in device_indices:
+    for i in out_device_indices:
         d = devs[i]
         if d['max_output_channels'] > 0 and is_valid_hostapi(d):
             if is_headphone_device(d['name']) and can_open_output(i):
@@ -173,7 +195,7 @@ def detect_audio_devices(verbose: bool = True) -> dict:
 
     # Output: Priority 2 = Realtek / Physical Laptop Speakers (WASAPI prioritized)
     if best_out_idx is None:
-        for i in device_indices:
+        for i in out_device_indices:
             d = devs[i]
             if d['max_output_channels'] > 0 and is_valid_hostapi(d) and not is_virtual_device(d['name']) and not is_unassigned_jack(d['name']):
                 if can_open_output(i):
@@ -189,7 +211,7 @@ def detect_audio_devices(verbose: bool = True) -> dict:
         is_headphones = is_headphone_device(best_out_name)
 
     # 3. Find Input: Priority 1 = Headset / External Mic
-    for i in device_indices:
+    for i in in_device_indices:
         d = devs[i]
         if d['max_input_channels'] > 0 and is_valid_hostapi(d):
             if is_headset_mic(d['name']) and can_open_input(i):
@@ -200,7 +222,7 @@ def detect_audio_devices(verbose: bool = True) -> dict:
 
     # Input: Priority 2 = Physical Built-in Microphone Array
     if best_in_idx is None:
-        for i in device_indices:
+        for i in in_device_indices:
             d = devs[i]
             if d['max_input_channels'] > 0 and is_valid_hostapi(d) and not is_virtual_device(d['name']) and not is_unassigned_jack(d['name']):
                 if can_open_input(i):

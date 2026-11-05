@@ -22,7 +22,7 @@ import asyncio
 # -------- Settings --------
 
 SAMPLE_RATE = 16000        # Native Whisper sampling rate
-BASE_THRESHOLD = 0.0040    # High-sensitivity RMS speech detection volume threshold (lowered from 0.008)
+BASE_THRESHOLD = 0.0030    # High-sensitivity RMS speech detection volume threshold (tuned for clear classroom/desk pickup)
 SILENCE_LIMIT = 0.65       # Snappy silence limit after speech (lowered from 1.0s to eliminate 350ms of dead air)
 MAX_RECORD_TIME = 8.0      # Hard maximum recording duration (prevents infinite loop/getting stuck)
 MAX_IDLE_TIME = 15         # Max silence before checking idle
@@ -32,7 +32,8 @@ BACKEND_URL = "http://127.0.0.1:8000/chat"
 WAKE_WORDS = [
     "myra", "maira", "myrah", "mira", "maya", "aira", "mera", "mayra",
     "mahira", "mahir", "meera", "moira", "vaira", "naira", "mora", "mara",
-    "mya", "mayrah", "meyra",
+    "mya", "mayrah", "meyra", "mire", "myer", "myers", "my run",
+    "hey myra", "hi myra", "hello myra", "ok myra", "okay myra",
     # Hindi spellings
     "माइरा", "मायरा", "मीरा", "मईरा", "माहिरा"
 ]
@@ -135,6 +136,12 @@ def correct_domain_phonetics(text):
         r'\bvaira\b': 'Myra',
         r'\bmira\b': 'Myra',
         r'\baira\b': 'Myra',
+        r'\bmeera\b': 'Myra',
+        r'\bmayra\b': 'Myra',
+        r'\bmy\s*run\b': 'Myra',
+        r'\bmire\b': 'Myra',
+        r'\bmyer\b': 'Myra',
+        r'\bmyers\b': 'Myra',
     }
     corrected = text
     for pattern, repl in corrections.items():
@@ -280,6 +287,8 @@ def record_audio_in_memory():
     else:
         print("\r💤 [STANDBY] Say 'Myra' to wake her up...                  ", end="", flush=True)
 
+    if not audio_cfg or audio_cfg.get("input_device") is None:
+        audio_cfg = get_cached_audio_config()
     in_dev = audio_cfg.get("input_device") if audio_cfg else None
     try:
         stream = sd.InputStream(
