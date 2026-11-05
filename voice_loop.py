@@ -23,7 +23,7 @@ import asyncio
 
 SAMPLE_RATE = 16000        # Native Whisper sampling rate
 BASE_THRESHOLD = 0.0030    # High-sensitivity RMS speech detection volume threshold (tuned for clear classroom/desk pickup)
-SILENCE_LIMIT = 0.65       # Snappy silence limit after speech (lowered from 1.0s to eliminate 350ms of dead air)
+SILENCE_LIMIT = 0.55       # Ultra-snappy silence cutoff after speech (lowered to 0.55s to start synthesis instantly)
 MAX_RECORD_TIME = 8.0      # Hard maximum recording duration (prevents infinite loop/getting stuck)
 MAX_IDLE_TIME = 15         # Max silence before checking idle
 ACTIVE_TIMEOUT = 35        # Seconds of inactivity before sleeping
